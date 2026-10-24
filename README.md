@@ -14,6 +14,20 @@ Repositories: <https://gitlab.com/zhangyazhou416/psrmcp> · <https://github.com/
 
 ## Quick start
 
+### Install from PyPI
+
+```bash
+pip install psrmcp        # library + the psrmcp CLI entry point
+# standalone CLI instead: uv tool install psrmcp  /  pipx install psrmcp
+
+psrmcp --init-config ~/.psrmcp.toml
+PSRMCP_CONFIG=~/.psrmcp.toml psrmcp
+```
+
+The pulsar software stack is installed separately (below); without it the server still starts and reports missing backends.
+
+### Run from source
+
 ```bash
 # 1. Install the pulsar software stack (optional; without it the server degrades
 #    gracefully and reports each missing backend via pulsar_environment)
@@ -40,6 +54,8 @@ PSRMCP_CONFIG=~/.psrmcp.toml uv run psrmcp
   }
 }
 ```
+
+Installed from PyPI, the entry point is simply `"command": "psrmcp"`.
 
 ## Development
 
