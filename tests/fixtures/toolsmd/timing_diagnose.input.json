@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/timing_diagnose.input.json",
+  "type": "object",
+  "required": [
+    "par",
+    "tim"
+  ],
+  "properties": {
+    "par": {
+      "type": "string"
+    },
+    "tim": {
+      "type": "string"
+    },
+    "root": {
+      "type": "string"
+    },
+    "backend": {
+      "enum": [
+        "pint",
+        "tempo2"
+      ],
+      "default": "pint"
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "outliers",
+          "dm",
+          "jumps",
+          "reduced_chi2",
+          "residual_distribution"
+        ]
+      },
+      "default": [
+        "outliers",
+        "dm",
+        "jumps",
+        "reduced_chi2",
+        "residual_distribution"
+      ],
+      "maxItems": 5
+    },
+    "outlier_sigma": {
+      "type": "number",
+      "minimum": 1,
+      "maximum": 20,
+      "default": 5
+    },
+    "generate_plot": {
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "additionalProperties": false
+}

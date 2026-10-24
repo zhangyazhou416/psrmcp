@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/archive_inspect.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "artifact ID 或 read root 下的相对路径"
+    },
+    "root": {
+      "type": "string",
+      "description": "当 archive 是相对路径时指定 data root"
+    },
+    "include_stats": {
+      "type": "boolean",
+      "default": true
+    },
+    "include_ephemeris": {
+      "type": "boolean",
+      "default": true
+    },
+    "include_integrations": {
+      "type": "boolean",
+      "default": false
+    },
+    "max_integrations": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000,
+      "default": 100
+    }
+  },
+  "additionalProperties": false
+}

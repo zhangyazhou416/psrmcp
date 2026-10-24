@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/toa_extract.input.json",
+  "type": "object",
+  "required": [
+    "archive",
+    "standard_profile"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string"
+    },
+    "root": {
+      "type": "string"
+    },
+    "standard_profile": {
+      "type": "string"
+    },
+    "algorithm": {
+      "enum": [
+        "PGS",
+        "GIS",
+        "PIS",
+        "ZPS",
+        "SIS",
+        "FDM"
+      ],
+      "default": "PGS"
+    },
+    "mjd_range": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "number"
+      }
+    },
+    "freq_range_mhz": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "number",
+        "minimum": 0
+      }
+    },
+    "min_snr": {
+      "type": "number",
+      "minimum": 0,
+      "default": 0
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}

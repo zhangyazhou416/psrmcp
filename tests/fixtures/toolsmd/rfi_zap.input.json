@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/rfi_zap.input.json",
+  "type": "object",
+  "required": [
+    "archive",
+    "mask"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string"
+    },
+    "root": {
+      "type": "string"
+    },
+    "mask": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "channels"
+          ],
+          "properties": {
+            "channels": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8192,
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "auto"
+          ],
+          "properties": {
+            "auto": {
+              "type": "object",
+              "required": [
+                "method"
+              ],
+              "properties": {
+                "method": {
+                  "enum": [
+                    "psrchive_median",
+                    "spectral_kurtosis",
+                    "bandpass"
+                  ]
+                },
+                "threshold_sigma": {
+                  "type": "number",
+                  "minimum": 0.5,
+                  "maximum": 20,
+                  "default": 3.0
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    }
+  },
+  "additionalProperties": false
+}

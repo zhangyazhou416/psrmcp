@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/pulsar_environment.input.json",
+  "type": "object",
+  "properties": {
+    "refresh": {
+      "type": "boolean",
+      "default": false,
+      "description": "重新探测后端，忽略启动时的缓存结果"
+    }
+  },
+  "additionalProperties": false
+}

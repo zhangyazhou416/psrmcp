@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/profile_standardize.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string"
+    },
+    "root": {
+      "type": "string"
+    },
+    "align": {
+      "enum": [
+        "profile",
+        "peak",
+        "none"
+      ],
+      "default": "profile"
+    },
+    "smooth": {
+      "type": "boolean",
+      "default": false
+    },
+    "nbin": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1048576
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    }
+  },
+  "additionalProperties": false
+}

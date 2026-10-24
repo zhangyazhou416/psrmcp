@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/profile_measure.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string"
+    },
+    "root": {
+      "type": "string"
+    },
+    "standard_profile": {
+      "type": "string",
+      "description": "可选，标准轮廓 artifact ID"
+    },
+    "metrics": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "snr",
+          "width",
+          "flux",
+          "polarization",
+          "dm"
+        ]
+      },
+      "default": [
+        "snr",
+        "width"
+      ],
+      "maxItems": 5
+    },
+    "generate_plot": {
+      "type": "boolean",
+      "default": true
+    },
+    "plot_type": {
+      "enum": [
+        "profile",
+        "phase_frequency"
+      ],
+      "default": "profile"
+    }
+  },
+  "additionalProperties": false
+}

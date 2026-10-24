@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/ephemeris_export.input.json",
+  "type": "object",
+  "oneOf": [
+    {
+      "required": [
+        "pulsar"
+      ]
+    },
+    {
+      "required": [
+        "artifact"
+      ]
+    }
+  ],
+  "properties": {
+    "pulsar": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "artifact": {
+      "type": "string",
+      "description": "已有 .par artifact ID"
+    },
+    "format": {
+      "enum": [
+        "tempo1",
+        "tempo2"
+      ],
+      "default": "tempo1"
+    },
+    "overrides": {
+      "type": "object",
+      "properties": {
+        "ra_deg": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 360
+        },
+        "dec_deg": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90
+        },
+        "p0_s": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "f0_hz": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "dm": {
+          "type": "number",
+          "minimum": 0
+        },
+        "pepoch_mjd": {
+          "type": "number"
+        },
+        "posepoch_mjd": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    }
+  },
+  "additionalProperties": false
+}

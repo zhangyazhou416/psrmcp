@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/rfi_scan.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string"
+    },
+    "root": {
+      "type": "string"
+    },
+    "method": {
+      "enum": [
+        "psrchive_median",
+        "spectral_kurtosis",
+        "bandpass"
+      ],
+      "default": "psrchive_median"
+    },
+    "threshold_sigma": {
+      "type": "number",
+      "minimum": 0.5,
+      "maximum": 20,
+      "default": 3.0
+    },
+    "generate_plot": {
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/timing_fit.input.json",
+  "type": "object",
+  "required": [
+    "par",
+    "tim"
+  ],
+  "properties": {
+    "par": {
+      "type": "string",
+      "description": "artifact ID 或 read root 下的 .par 相对路径"
+    },
+    "tim": {
+      "type": "string",
+      "description": "artifact ID 或 read root 下的 .tim 相对路径"
+    },
+    "root": {
+      "type": "string"
+    },
+    "backend": {
+      "enum": [
+        "pint",
+        "tempo2"
+      ],
+      "default": "pint"
+    },
+    "fit_params": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_]+$"
+      },
+      "maxItems": 50,
+      "description": "缺省使用 par 文件中的 fit flags；显式提供时必须能在 par 中解析"
+    },
+    "weighting": {
+      "enum": [
+        "uniform",
+        "1/sigma^2"
+      ],
+      "default": "1/sigma^2"
+    },
+    "generate_plot": {
+      "type": "boolean",
+      "default": true
+    },
+    "max_iterations": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000,
+      "default": 100
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}

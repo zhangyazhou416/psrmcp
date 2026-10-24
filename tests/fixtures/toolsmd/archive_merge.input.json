@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/archive_merge.input.json",
+  "type": "object",
+  "required": [
+    "archives"
+  ],
+  "properties": {
+    "archives": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 100,
+      "items": {
+        "type": "string"
+      }
+    },
+    "root": {
+      "type": "string"
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "weighting": {
+      "enum": [
+        "none",
+        "time",
+        "snr"
+      ],
+      "default": "none"
+    },
+    "require_same_source": {
+      "type": "boolean",
+      "default": true
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}

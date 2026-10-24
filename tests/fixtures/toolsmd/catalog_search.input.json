@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/catalog_search.input.json",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "ra_deg": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 360
+    },
+    "dec_deg": {
+      "type": "number",
+      "minimum": -90,
+      "maximum": 90
+    },
+    "radius_deg": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 180
+    },
+    "p0_min_s": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "p0_max_s": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "dm_min": {
+      "type": "number",
+      "minimum": 0
+    },
+    "dm_max": {
+      "type": "number",
+      "minimum": 0
+    },
+    "binary_only": {
+      "type": "boolean",
+      "default": false
+    },
+    "fields": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "name",
+          "aliases",
+          "ra_deg",
+          "dec_deg",
+          "p0_s",
+          "f0_hz",
+          "p1",
+          "dm",
+          "binary",
+          "binary_model",
+          "observatory",
+          "catalog_version"
+        ]
+      },
+      "maxItems": 12
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200,
+      "default": 50
+    },
+    "cursor": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

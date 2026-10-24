@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/archive_convert.input.json",
+  "type": "object",
+  "required": [
+    "archive",
+    "output_format"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "artifact ID 或 read root 下的相对路径"
+    },
+    "root": {
+      "type": "string"
+    },
+    "output_format": {
+      "enum": [
+        "psrfits",
+        "psrarchive",
+        "sigproc",
+        "ascii"
+      ]
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    }
+  },
+  "additionalProperties": false
+}

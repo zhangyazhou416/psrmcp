@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/dedisperse.input.json",
+  "type": "object",
+  "required": [
+    "input",
+    "ephemeris"
+  ],
+  "properties": {
+    "input": {
+      "type": "string",
+      "description": "原始数据或 archive 的 artifact ID / 相对路径"
+    },
+    "root": {
+      "type": "string"
+    },
+    "ephemeris": {
+      "type": "string",
+      "description": "artifact ID、read root 下的 .par 路径，或脉冲星名"
+    },
+    "mode": {
+      "enum": [
+        "coherent",
+        "incoherent"
+      ],
+      "default": "coherent"
+    },
+    "dm_override": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "显式覆盖 DM；会写入 provenance"
+    },
+    "output_format": {
+      "enum": [
+        "psrfits",
+        "psrarchive"
+      ],
+      "default": "psrfits"
+    },
+    "nsubint": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10000
+    },
+    "nchan": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 8192
+    },
+    "nbin": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1048576
+    },
+    "threads": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 64
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}

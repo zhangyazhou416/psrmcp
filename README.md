@@ -1,0 +1,48 @@
+# psrmcp
+
+把脉冲星天文软件链(dspsr / psrchive / tempo2 / psrcat / PINT)封装成 MCP(Model Context Protocol)Server:面向任务的工具、参数受控、结果结构化、全程可追溯。
+
+- 功能总览:[docs/FEATURES.md](docs/FEATURES.md)(能做什么、19 个工具一览)
+- 使用教程:[docs/TUTORIAL.md](docs/TUTORIAL.md)(安装配置、接入客户端、完整处理链实战)
+- 设计方案:[docs/DESIGN.md](docs/DESIGN.md)
+- 工具契约:[docs/TOOLS.md](docs/TOOLS.md)(19 个工具的输入/输出 Schema)
+- 一键安装脉冲星软件栈:[scripts/install_pulsar_stack.sh](scripts/install_pulsar_stack.sh)(全源码编译进 `~/.pulsar`,详见 [docs/INSTALL.md](docs/INSTALL.md))
+
+## 快速开始
+
+```bash
+# 1. 安装脉冲星软件栈(可选,缺省时服务器会优雅降级并在 pulsar_environment 中报告)
+bash scripts/install_pulsar_stack.sh          # 加 --with-presto 连 PRESTO 一起装
+
+# 2. 准备 MCP 服务器环境
+uv sync
+
+# 3. 生成默认配置并启动(stdio)
+uv run psrmcp --init-config ~/.psrmcp.toml
+PSRMCP_CONFIG=~/.psrmcp.toml uv run psrmcp
+```
+
+### 接入 MCP 客户端(如 Claude Code / Desktop)
+
+```json
+{
+  "mcpServers": {
+    "pulsar": {
+      "command": "uv",
+      "args": ["--directory", "/path/to/psrmcp", "run", "psrmcp"],
+      "env": {"PSRMCP_CONFIG": "~/.psrmcp.toml"}
+    }
+  }
+}
+```
+
+## 开发
+
+```bash
+uv run pytest -q                        # 单元测试(不需要安装任何后端)
+PSRMCP_CONTRACT=1 uv run pytest tests/contract   # 契约测试(需要已安装软件栈)
+```
+
+## 状态
+
+v0.1.0 — MVP(Phase 0–2):环境自检、数据发现、星表查询、archive 检查/转换/合并、消色散、RFI、标准轮廓、TOA、PINT 计时拟合与诊断。
