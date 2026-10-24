@@ -1,0 +1,51 @@
+# GitHub Actions:打 tag 自动发布 PyPI(PyPI Trusted Publishing / OIDC)。
+# 与 .gitlab-ci.yml 作用相同;GitHub 侧没有身份验证门槛,推荐作为发布通道。
+#
+# 一次性设置(pypi.org 网页):
+#   登录 → Account settings → Publishing → Add a new pending publisher
+#     PyPI project name:  psrmcp
+#     Owner:              zhangyazhou416
+#     Repository:         psrmcp
+#     Workflow name:      publish.yml
+#     Environment:        留空
+# (首次发布成功后,改在项目页 Project settings → Publishing 管理)
+#
+# 注意:Trusted Publishing 要求 GitHub 仓库为 public。
+# 若需保持私有:改用 API token —— 仓库 Secrets 里存 PYPI_API_TOKEN(masked),
+# 并把最后一步换成:
+#   - run: uv publish
+#     env:
+#       UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+#
+# 发布方式:git tag v0.1.0 && git push origin v0.1.0(双仓库同时收到即触发)
+
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync
+      - run: uv run pytest tests/unit -q
+
+  publish-pypi:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # Trusted Publishing(OIDC)必需
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv build
+      - uses: pypa/gh-action-pypi-publish@release/v1
