@@ -15,6 +15,20 @@
 
 ## 快速开始
 
+### 从 PyPI 安装
+
+```bash
+pip install psrmcp        # 库 + psrmcp 命令行入口
+# 或独立安装 CLI:uv tool install psrmcp / pipx install psrmcp
+
+psrmcp --init-config ~/.psrmcp.toml
+PSRMCP_CONFIG=~/.psrmcp.toml psrmcp
+```
+
+脉冲星软件栈需单独安装(见下);不装也能启动,服务器会逐后端报告缺失。
+
+### 从源码运行
+
 ```bash
 # 1. 安装脉冲星软件栈(可选,缺省时服务器会优雅降级并在 pulsar_environment 中报告)
 bash scripts/install_pulsar_stack.sh          # 加 --with-presto 连 PRESTO 一起装
@@ -40,6 +54,8 @@ PSRMCP_CONFIG=~/.psrmcp.toml uv run psrmcp
   }
 }
 ```
+
+从 PyPI 安装后,入口直接写 `"command": "psrmcp"` 即可。
 
 ## 开发
 
