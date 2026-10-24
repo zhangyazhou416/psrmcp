@@ -1,0 +1,58 @@
+# CI:单元测试 + PyPI 自动发布(PyPI Trusted Publishing / OIDC,CI 中无长期 token)。
+#
+# 首次发布前的一次性设置(pypi.org):
+#   登录 → Account settings → Publishing → Add a new pending publisher
+#     PyPI project name:  psrmcp
+#     Pending publisher:  GitLab CI/CD
+#     Owner (namespace):  zhangyazhou416
+#     Repository name:    psrmcp
+#     Workflow filename:  .gitlab-ci.yml
+# (项目首次发布成功后,改在项目页 Project settings → Publishing 管理)
+#
+# 发布方式:打 tag 即自动构建上传
+#   git tag v0.1.0 && git push origin v0.1.0
+# (注意保持 tag 与 pyproject.toml 的 version 一致;PyPI 禁止同版本重传)
+
+stages:
+  - test
+  - publish
+
+unit-tests:
+  stage: test
+  image: ghcr.io/astral-sh/uv:python3.12-bookworm
+  cache:
+    key:
+      files:
+        - uv.lock
+    paths:
+      - .venv/
+  script:
+    - uv sync
+    - uv run pytest tests/unit -q
+
+publish-pypi:
+  stage: publish
+  image: ghcr.io/astral-sh/uv:python3.12-bookworm
+  id_tokens:
+    PYPI_ID_TOKEN:          # GitLab OIDC ID token;aud 必须为 pypi
+      aud: pypi
+  script:
+    - uv build
+    # 用 OIDC ID token 向 PyPI 换一次性上传 token(UV_PUBLISH_TOKEN 为 uv publish 认可)
+    - |
+      cat > /tmp/mint_token.py <<'PY'
+      import json, os, urllib.request
+
+      req = urllib.request.Request(
+          "https://pypi.org/_/oidc/mint-token",
+          data=json.dumps({"token": os.environ["PYPI_ID_TOKEN"]}).encode(),
+          headers={"Content-Type": "application/json"},
+      )
+      with urllib.request.urlopen(req) as resp:
+          print(json.load(resp)["token"])
+      PY
+      export UV_PUBLISH_TOKEN="$(python3 /tmp/mint_token.py)"
+      uv publish
+  rules:
+    - if: $CI_COMMIT_TAG    # 仅打 tag 时发布;tag 也可在 GitLab 页面手动跑此 job
+      when: on_success
