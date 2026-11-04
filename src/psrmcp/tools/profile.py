@@ -26,14 +26,14 @@ from .registry import ToolRegistry, ToolSpec
 def register(reg: ToolRegistry) -> None:
     reg.add(ToolSpec(
         name="profile_standardize",
-        description="从 archive 生成标准轮廓产物,供 TOA 提取(pat)使用。",
+        description="Build a standard profile artifact from an archive, for use by TOA extraction (pat).",
         input_model=ProfileStandardizeInput,
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False),
         handler=_standardize,
     ))
     reg.add(ToolSpec(
         name="profile_measure",
-        description="测量 archive 轮廓指标:S/N、宽度、流量等。只读。",
+        description="Measure profile metrics from an archive: S/N, width, flux, and more. Read-only.",
         input_model=ProfileMeasureInput,
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
         handler=_measure,
@@ -44,8 +44,9 @@ async def _standardize(ctx: AppContext, inp: ProfileStandardizeInput, progress) 
     started = utcnow()
     t0 = time.monotonic()
     psr_info = await ctx.backends.require("psrchive")
-    # 实测:pas 是"对齐标准轮廓"的交互程序,不能批量生成标准轮廓;
-    # 生成标准轮廓的批处理路径是 pam -T(tscrunch 到单 subint)。
+    # Observed: pas is an interactive "align to standard profile" program and
+    # cannot batch-produce standard profiles; the batch path for building one
+    # is pam -T (tscrunch to a single subint).
     binary = _psrchive_tool(ctx, "pam")
     resolved = ctx.resolver.resolve(inp.archive, root=inp.root, what="archive")
 
@@ -53,12 +54,13 @@ async def _standardize(ctx: AppContext, inp: ProfileStandardizeInput, progress) 
     if inp.align != "profile" or inp.smooth:
         warnings.append(WarningInfo(
             code="W_FLAG_SKIPPED",
-            message=f"align={inp.align}/smooth={inp.smooth} 无批处理等价旗标(pas 为交互程序),未应用",
+            message=f"align={inp.align}/smooth={inp.smooth} have no batch-equivalent flags (pas is interactive); not applied",
             severity="warning",
         ))
 
     job_tmp = ctx.ws.new_job_tmp(f"pam_{int(time.time() * 1000)}")
-    # pam 把 <输入名>.<ext> 写进进程 cwd,先把输入复制进 job tmp 隔离
+    # pam writes <input name>.<ext> into the process cwd; copy the input into
+    # the job tmp first to isolate it
     import shutil
 
     local_src = job_tmp / "standard_src.ar"
@@ -75,7 +77,7 @@ async def _standardize(ctx: AppContext, inp: ProfileStandardizeInput, progress) 
         else:
             warnings.append(WarningInfo(
                 code="W_FLAG_SKIPPED",
-                message=f"nbin={inp.nbin} 无法经整除的 bin scrunch 达到(原 nbin={orig_nbin or '未知'}),保持原分辨率",
+                message=f"nbin={inp.nbin} is not reachable via an integral-factor bin scrunch (original nbin={orig_nbin or 'unknown'}); keeping the original resolution",
                 severity="warning",
             ))
 
@@ -87,7 +89,7 @@ async def _standardize(ctx: AppContext, inp: ProfileStandardizeInput, progress) 
         log_id = log_artifact_from_stderr(ctx, job_key="pam", stderr=run.stderr_tail(), argv=argv)
         raise PsrmcpError(
             ErrorCode.PROCESS_FAILED,
-            f"pam 失败(退出码 {run.exit_code}): {run.stderr_tail(300)}",
+            f"pam failed (exit code {run.exit_code}): {run.stderr_tail(300)}",
             log_artifact_id=log_id,
         )
 
@@ -175,13 +177,13 @@ async def _measure(ctx: AppContext, inp: ProfileMeasureInput, progress) -> Profi
     if "flux" in inp.metrics:
         warnings.append(WarningInfo(
             code="W_FLUX_UNCALIBRATED",
-            message="流量定标需要 calibrator,暂不提供 flux_mjy",
+            message="flux calibration requires a calibrator; flux_mjy is not provided yet",
             severity="warning",
         ))
     if "polarization" in inp.metrics:
         warnings.append(WarningInfo(
             code="W_POLARIZATION_SKIPPED",
-            message="偏振参数依赖 pac 校准,放到后期版本",
+            message="polarization parameters depend on pac calibration; deferred to a later release",
             severity="warning",
         ))
 
@@ -209,11 +211,11 @@ def _plot_profile(ctx: AppContext, path, plot_type: str, warnings: list[WarningI
     # TODO(contract): psrplot ascii export + parser gets backfilled with the
     # toolchain; until then profile plots degrade to a warning.
     try:
-        raise RuntimeError("psrplot ascii 输出解析待契约测试回填")
+        raise RuntimeError("psrplot ascii output parsing awaits contract-test backfill")
     except Exception as exc:
         warnings.append(WarningInfo(
             code="W_PLOT_UNAVAILABLE",
-            message=f"轮廓图暂不可用({exc});计时/RFI 图不受影响",
+            message=f"profile plots are unavailable ({exc}); timing/RFI plots are unaffected",
             severity="info",
         ))
         return None

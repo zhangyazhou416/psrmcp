@@ -39,21 +39,21 @@ _NAME_FIX = re.compile(r"^(J|B)?(\d{4}[+-]\d{2,4})$", re.IGNORECASE)
 def register(reg: ToolRegistry) -> None:
     reg.add(ToolSpec(
         name="catalog_search",
-        description="查询 ATNF 脉冲星星表:按名称、位置锥、周期、DM、双星筛选。至少一个条件。",
+        description="Search the ATNF pulsar catalogue: filter by name, sky cone, period, DM, and binarity. At least one criterion is required.",
         input_model=CatalogSearchInput,
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True),
         handler=_search,
     ))
     reg.add(ToolSpec(
         name="catalog_get",
-        description="按名称精确获取单个脉冲星记录(支持 J/B 名称与别名)。",
+        description="Fetch a single pulsar record by exact name (supports J/B names and aliases).",
         input_model=CatalogGetInput,
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True),
         handler=_get,
     ))
     reg.add(ToolSpec(
         name="ephemeris_export",
-        description="从星表记录或已有 .par 生成 TEMPO/TEMPO2 格式 ephemeris 产物。",
+        description="Generate a TEMPO/TEMPO2-format ephemeris artifact from a catalogue record or an existing .par.",
         input_model=EphemerisExportInput,
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True),
         handler=_export,
@@ -98,13 +98,13 @@ def _run_psrcat(ctx: AppContext, argv: list[str]) -> str:
     if database is not None:
         db_path = database.expanduser()
         if db_path.exists():
-            # psrcat 没有 -db 旗标,靠 PSRCAT_FILE 找星表
+            # psrcat has no -db flag; it locates the catalogue via PSRCAT_FILE
             env = {**os.environ, "PSRCAT_FILE": str(db_path)}
     proc = subprocess.run(argv, capture_output=True, text=True, timeout=60, env=env)
     if proc.returncode != 0:
         raise PsrmcpError(
             ErrorCode.PROCESS_FAILED,
-            f"psrcat 查询失败: {proc.stderr.strip()[:300]}",
+            f"psrcat query failed: {proc.stderr.strip()[:300]}",
             details={"argv": argv},
         )
     return proc.stdout
@@ -126,10 +126,12 @@ def _norm_name(name: str) -> str:
 def _record_from_row(row: dict[str, Any]) -> CatalogRecord:
     ra = row.get("ra_str")
     dec = row.get("dec_str")
-    # 星表通配("*")经 _num 已归一为 None;角度/数值字段缺省兜底
+    # Catalogue wildcard ("*") is already normalized to None by _num; default
+    # fallback for angle/numeric fields
     ra_deg = psa.hms_to_deg_or_num(str(ra)) if ra else 0.0
     dec_deg = psa.dms_to_deg(str(dec)) if dec else 0.0
-    # CatalogRecord 契约要求 p0_s > 0;无周期记录(RRAT 等)用 psrqpy 路径同款哨兵
+    # The CatalogRecord contract requires p0_s > 0; records without a period
+    # (RRATs etc.) use the same sentinel as the psrqpy path
     p0 = _opt_float(row.get("p0_s")) or 1e-9
     dm = _opt_float(row.get("dm")) or 0.0
     model = row.get("binary_model")
@@ -169,13 +171,13 @@ async def _search(ctx: AppContext, inp: CatalogSearchInput, progress) -> Catalog
         return await _search_psrcat(ctx, inp)
     if _psrqpy_available(ctx):
         return await _search_psrqpy(ctx, inp)
-    raise env_missing("psrcat", "未找到 psrcat 且 psrqpy 不可用(或 catalog.mode=local)")
+    raise env_missing("psrcat", "psrcat not found and psrqpy unavailable (or catalog.mode=local)")
 
 
 async def _search_psrcat(ctx: AppContext, inp: CatalogSearchInput) -> CatalogSearchResult:
     binary = ctx.backends.resolve("psrcat")
     if binary is None:
-        raise env_missing("psrcat", "未找到 psrcat 二进制")
+        raise env_missing("psrcat", "psrcat binary not found")
     conditions: list[str] = []
     if inp.p0_min_s is not None:
         conditions.append(f"p0 > {inp.p0_min_s}")
@@ -198,8 +200,8 @@ async def _search_psrcat(ctx: AppContext, inp: CatalogSearchInput) -> CatalogSea
         except ValueError:
             continue  # header/echo line
     records = [_record_from_row(r) for r in rows]
-    # 实测 psrcat 无锥搜索/双星 CLI 旗标(-boundary 对负 DEC 也不可靠),
-    # 过滤在 Python 端完成
+    # psrcat has no cone-search/binary CLI flags in practice (-boundary is
+    # unreliable for negative DEC too), so filtering is done in Python
     if inp.ra_deg is not None and inp.dec_deg is not None and inp.radius_deg is not None:
         records = [
             r for r in records
@@ -271,8 +273,9 @@ async def _search_psrqpy(ctx: AppContext, inp: CatalogSearchInput) -> CatalogSea
                 p1=_opt_float(row.get("P1")),
                 dm=dm,
                 binary=is_binary,
-                # ATNF BINCOMP 是伴星成分描述符(如 "He[vbv+08]"),
-                # 不是 BINARY 模型名,不能写进 par
+                # ATNF BINCOMP is a companion-composition descriptor
+                # (e.g. "He[vbv+08]"), not a BINARY model name, so it must not
+                # go into the par
                 binary_model=None,
                 observatory=None,
                 catalog_version=getattr(psrqpy, "__version__", "atnf"),
@@ -293,7 +296,7 @@ async def _search_psrqpy(ctx: AppContext, inp: CatalogSearchInput) -> CatalogSea
         count=len(page),
         next_cursor=next_cursor,
         catalog=await _catalog_meta(ctx, CatalogMode.ONLINE),
-        warnings=[WarningInfo(code="W_ONLINE_QUERY", message="结果来自 ATNF 在线查询(psrqpy)", severity="info")],
+        warnings=[WarningInfo(code="W_ONLINE_QUERY", message="results come from an ATNF online query (psrqpy)", severity="info")],
     )
 
 
@@ -310,9 +313,9 @@ async def _get(ctx: AppContext, inp: CatalogGetInput, progress) -> CatalogGetRes
     elif _psrqpy_available(ctx):
         result = await _search_psrqpy(ctx, search)
     else:
-        raise env_missing("psrcat", "未找到 psrcat 且 psrqpy 不可用")
+        raise env_missing("psrcat", "psrcat not found and psrqpy unavailable")
     if not result.records:
-        raise not_found(f"星表中没有 {inp.name}", hint="用 catalog_search 模糊查询确认名称")
+        raise not_found(f"{inp.name} not found in the catalogue", hint="use catalog_search to confirm the name")
     record = result.records[0]
     return CatalogGetResult(
         record=record,
@@ -323,28 +326,28 @@ async def _get(ctx: AppContext, inp: CatalogGetInput, progress) -> CatalogGetRes
 
 
 async def _psrcat_ephem(ctx: AppContext, name: str) -> str:
-    """psrcat -e 的完整 TEMPO 星历文本;失败或空输出视为工具错误。"""
+    """Full TEMPO ephemeris text from psrcat -e; failure or empty output is a tool error."""
     binary = ctx.backends.resolve("psrcat")
     if binary is None:
-        raise env_missing("psrcat", "未找到 psrcat 二进制")
+        raise env_missing("psrcat", "psrcat binary not found")
     out = await _run_psrcat_async(ctx, psa.psrcat_ephem_cmd(binary, name))
     if "PSRJ" not in out:
         raise PsrmcpError(
             ErrorCode.PROCESS_FAILED,
-            f"psrcat -e 未产出有效星历: {out.strip()[:120] or '(空输出)'}",
+            f"psrcat -e produced no valid ephemeris: {out.strip()[:120] or '(empty output)'}",
         )
     return out
 
 
 def _apply_par_overrides(text: str, ov: EphemerisOverrides) -> str:
-    """把数值类 override 逐行写进 psrcat 星历(保持行内对齐)。"""
+    """Write numeric overrides line by line into the psrcat ephemeris (preserving in-line alignment)."""
     subs: dict[str, float] = {}
     if ov.dm is not None:
         subs["DM"] = ov.dm
     if ov.f0_hz is not None:
         subs["F0"] = ov.f0_hz
     if ov.p0_s is not None:
-        subs["F0"] = 1.0 / ov.p0_s  # psrcat 星历以 F0 表达自转
+        subs["F0"] = 1.0 / ov.p0_s  # the psrcat ephemeris expresses spin as F0
     if ov.pepoch_mjd is not None:
         subs["PEPOCH"] = ov.pepoch_mjd
     if ov.posepoch_mjd is not None:
@@ -386,15 +389,16 @@ async def _export(ctx: AppContext, inp: EphemerisExportInput, progress) -> Ephem
         warnings.append(
             WarningInfo(
                 code="W_EPHEMERIS_PASSTHROUGH",
-                message="artifact 输入按原文复制;tempo1<->tempo2 的格式转换需要 PINT,当前未执行",
+                message="artifact input is copied verbatim; tempo1<->tempo2 conversion requires PINT and is not performed here",
                 severity="warning",
             )
         )
         return EphemerisExportResult(artifact=ref, format=inp.format, warnings=warnings, provenance=prov)
 
-    # From the catalogue. 本地星表直接导出 psrcat -e 的完整星历(含
-    # BINARY/PB/ECC/CLK/EPHEM,可直接计时);位置 override 会要求改写
-    # ELONG/ELAT(黄道坐标),诚实起见退回合成路径。
+    # From the catalogue. The local catalogue exports the full psrcat -e
+    # ephemeris directly (with BINARY/PB/ECC/CLK/EPHEM, usable for timing);
+    # a position override would require rewriting ELONG/ELAT (ecliptic
+    # coordinates), so for honesty we fall back to the synthetic path.
     pos_override = bool(overrides and (overrides.ra_deg is not None or overrides.dec_deg is not None))
     out_name: str
     if _use_psrcat(ctx) and not pos_override:
@@ -430,7 +434,7 @@ async def _export(ctx: AppContext, inp: EphemerisExportInput, progress) -> Ephem
             warnings.append(
                 WarningInfo(
                     code="W_BINARY_PARAMS_INCOMPLETE",
-                    message="双星参数(TTASC/ECC/...)未从星表完整导出,计时前需补充",
+                    message="binary parameters (TTASC/ECC/...) were not fully exported from the catalogue; complete them before timing",
                     severity="warning",
                 )
             )

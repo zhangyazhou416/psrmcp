@@ -41,7 +41,7 @@ def main() -> int:
         return _fail("E_ENV_MISSING", f"PINT import failed: {exc}")
 
     try:
-        # allow_T2: psrcat 星表常用 T2 双星模型,PINT 1.1+ 默认拒绝加载
+        # allow_T2: psrcat catalogs commonly use the T2 binary model, which PINT 1.1+ refuses to load by default
         model = get_model(req["par"], allow_T2=True)
         toas = get_TOAs(req["tim"], model=model, usepickle=False)
     except Exception as exc:
@@ -63,7 +63,7 @@ def main() -> int:
 
 
 def _residual_payload(fitter: Any, model: Any, toas: Any) -> dict[str, Any]:
-    # PINT 1.1+: fitter.resids / Residuals.time_resids;toas 误差向量在 toas 上
+    # PINT 1.1+: fitter.resids / Residuals.time_resids; the TOA error vector lives on toas
     res = getattr(fitter, "resids", None) or fitter.residual
     data_us = [float(x) for x in res.time_resids.to_value("us")]
     err_us = [float(x) for x in toas.get_errors().to_value("us")]
@@ -124,7 +124,7 @@ def _fit(req: dict[str, Any], model: Any, toas: Any, fitter_cls: type) -> dict[s
         unknown = [n for n in fit_params if n not in model.params]
         if unknown:
             return {"ok": False, "code": "E_INVALID_INPUT",
-                    "message": f"fit_params 不在 par 文件中: {', '.join(unknown)}"}
+                    "message": f"fit_params not present in par file: {', '.join(unknown)}"}
         for name in model.params:
             getattr(model, name).frozen = name not in fit_params
 
@@ -149,7 +149,7 @@ def _fit(req: dict[str, Any], model: Any, toas: Any, fitter_cls: type) -> dict[s
     for name in fitter.model.params:
         p = getattr(fitter.model, name)
         q = p.quantity
-        # strParameter 的 quantity 是裸字符串;TZRMJD 等是 astropy Time
+        # strParameter quantities are bare strings; TZRMJD and the like are astropy Time
         if q is None or isinstance(q, str):
             continue
         raw = getattr(q, "value", q)
@@ -210,11 +210,11 @@ def _diagnose(req: dict[str, Any], model: Any, toas: Any) -> dict[str, Any]:
                 findings.append({
                     "code": "OUTLIER",
                     "severity": "warning",
-                    "message": f"TOA #{i} (MJD {mjds[i]:.4f}) 偏离 {abs(v):.1f} us (> {sigma} sigma)",
+                    "message": f"TOA #{i} (MJD {mjds[i]:.4f}) deviates by {abs(v):.1f} us (> {sigma} sigma)",
                     "details": {"index": i, "res_us": v, "err_us": err_us[i]},
                 })
         if n_outliers:
-            recommendations.append(f"考虑剔除 {n_outliers} 个 > {sigma} sigma 的离群 TOA 后重新拟合")
+            recommendations.append(f"consider removing the {n_outliers} TOAs beyond {sigma} sigma and refitting")
 
     if "jumps" in checks:
         jumps = [n for n in model.params if n.upper().startswith("JUMP")]
@@ -222,7 +222,7 @@ def _diagnose(req: dict[str, Any], model: Any, toas: Any) -> dict[str, Any]:
             findings.append({
                 "code": "JUMPS_PRESENT",
                 "severity": "info",
-                "message": f"模型包含 {len(jumps)} 个 JUMP 参数: {', '.join(jumps)}",
+                "message": f"model contains {len(jumps)} JUMP parameters: {', '.join(jumps)}",
                 "details": {"jumps": jumps},
             })
 
@@ -232,7 +232,7 @@ def _diagnose(req: dict[str, Any], model: Any, toas: Any) -> dict[str, Any]:
             findings.append({
                 "code": "DM_INFO",
                 "severity": "info",
-                "message": f"模型 DM = {float(dm_param.quantity.value):.6f} pc cm^-3",
+                "message": f"model DM = {float(dm_param.quantity.value):.6f} pc cm^-3",
                 "details": {"dm": float(dm_param.quantity.value)},
             })
 
@@ -241,15 +241,15 @@ def _diagnose(req: dict[str, Any], model: Any, toas: Any) -> dict[str, Any]:
             findings.append({
                 "code": "RED_CHI2_HIGH",
                 "severity": "error",
-                "message": f"reduced chi2 = {red:.2f} 远大于 1,残差结构未建模",
+                "message": f"reduced chi2 = {red:.2f} is far above 1; residual structure is unmodeled",
                 "details": {"reduced_chi2": red},
             })
-            recommendations.append("检查 ephemeris 是否过期、是否需要 EPHVER/JUMP/DMX,或 TOA 权重是否合理")
+            recommendations.append("check whether the ephemeris is stale, whether EPHVER/JUMP/DMX are needed, or whether TOA weights are sensible")
         elif red < 0.3:
             findings.append({
                 "code": "RED_CHI2_LOW",
                 "severity": "info",
-                "message": f"reduced chi2 = {red:.2f} 明显小于 1,TOA 误差可能被高估",
+                "message": f"reduced chi2 = {red:.2f} is well below 1; TOA errors may be overestimated",
                 "details": {"reduced_chi2": red},
             })
 
@@ -258,11 +258,11 @@ def _diagnose(req: dict[str, Any], model: Any, toas: Any) -> dict[str, Any]:
         findings.append({
             "code": "DISTRIBUTION",
             "severity": "info",
-            "message": f"残差分布: skew={skew:.2f}, excess kurtosis={exkurt:.2f}",
+            "message": f"residual distribution: skew={skew:.2f}, excess kurtosis={exkurt:.2f}",
             "details": {"skew": skew, "excess_kurtosis": exkurt},
         })
         if abs(skew) > 1.0:
-            recommendations.append("残差明显偏斜,检查是否混入不同后端/频率的 TOA")
+            recommendations.append("residuals are clearly skewed; check whether TOAs from different backends/frequencies are mixed in")
 
     return {
         "ok": True,

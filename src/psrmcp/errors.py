@@ -78,7 +78,7 @@ def path_denied(message: str, hint: str | None = None, **kw: Any) -> PsrmcpError
     return PsrmcpError(
         ErrorCode.PATH_DENIED,
         message,
-        hint=hint or "使用配置的 read_roots 下的相对路径或 artifact ID",
+        hint=hint or "use a relative path under the configured read_roots, or an artifact ID",
         **kw,
     )
 
@@ -87,7 +87,7 @@ def env_missing(backend: str, reason: str, hint: str | None = None) -> PsrmcpErr
     return PsrmcpError(
         ErrorCode.ENV_MISSING,
         f"backend '{backend}' unavailable: {reason}",
-        hint=hint or "运行 scripts/install_pulsar_stack.sh 安装对应后端,或在配置中修正其路径",
+        hint=hint or "run scripts/install_pulsar_stack.sh to install the backend, or fix its path in the config",
         details={"backend": backend},
     )
 

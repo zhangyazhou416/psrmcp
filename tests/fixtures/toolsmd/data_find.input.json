@@ -10,11 +10,11 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 256,
-      "description": "glob 模式，例如 '*.ar'、'J0437*'、'**/*.fits'"
+      "description": "Glob pattern, e.g. '*.ar', 'J0437*', '**/*.fits'"
     },
     "root": {
       "type": "string",
-      "description": "read_roots 下的子目录；省略时搜索所有 root"
+      "description": "Subdirectory under read_roots; omit to search all roots"
     },
     "max_depth": {
       "type": "integer",

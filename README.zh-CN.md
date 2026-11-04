@@ -7,11 +7,27 @@
 仓库:<https://gitlab.com/zhangyazhou416/psrmcp>
 仓库:<https://github.com/zhangyazhou416/psrmcp>
 
-- 功能总览:[docs/FEATURES.md](docs/FEATURES.md)(能做什么、19 个工具一览)
-- 使用教程:[docs/TUTORIAL.md](docs/TUTORIAL.md)(安装配置、接入客户端、完整处理链实战)
-- 设计方案:[docs/DESIGN.md](docs/DESIGN.md)
-- 工具契约:[docs/TOOLS.md](docs/TOOLS.md)(19 个工具的输入/输出 Schema)
-- 一键安装脉冲星软件栈:[scripts/install_pulsar_stack.sh](scripts/install_pulsar_stack.sh)(全源码编译进 `~/.pulsar`,详见 [docs/INSTALL.md](docs/INSTALL.md))
+- 功能总览:[docs/FEATURES-zh.md](docs/FEATURES-zh.md)(能做什么、19 个工具一览)
+- 使用教程:[docs/TUTORIAL-zh.md](docs/TUTORIAL-zh.md)(安装配置、接入客户端、完整处理链实战)
+- 设计方案:[docs/DESIGN-zh.md](docs/DESIGN-zh.md)
+- 工具契约:[docs/TOOLS-zh.md](docs/TOOLS-zh.md)(19 个工具的输入/输出 Schema)
+- 一键安装脉冲星软件栈:[scripts/install_pulsar_stack.sh](scripts/install_pulsar_stack.sh)(全源码编译进 `~/.pulsar`,详见 [docs/INSTALL-zh.md](docs/INSTALL-zh.md))
+
+## 为什么需要 psrmcp?
+
+同一个问题——「*周期 < 5ms 且 DM > 200 的脉冲星有几颗?*」——分别问带联网搜索的通用大模型,和接入 psrmcp 的 Claude Code:
+
+| | 通用大模型(联网搜索) | Claude Code + psrmcp |
+|---|---|---|
+| 回答 | 「无法给出一个确切的数字」,并建议你自己去查 ATNF 星表 | **54 颗**——本地星表实查,全量返回,无截断 |
+| 依据 | 散落在各论文/网页里的零星个例 | 回答时现场执行的星表查询 |
+| 后续价值 | — | 按族群分解(Terzan 5 内 32 颗、银道面巡天 9 颗…)、极端值(最快 1.4 ms、DM 最高 540)、天体物理解读 |
+
+| 通用大模型(联网搜索) | Claude Code + psrmcp |
+|:---:|:---:|
+| <img src="docs/images/query-deepseek.png" alt="DeepSeek:无法给出确切数字,建议自查 ATNF" width="400"/> | <img src="docs/images/query-psrmcp.png" alt="psrmcp:54 颗,含族群分解与极端值" width="430"/> |
+
+差别不在模型聪明程度,而在**答案从哪来**:从训练记忆里回忆(冻结、无法核实、冷门对象必错),还是通过契约测试过的工具现场查询真实星表——领域 CLI 知识(旗标、列名、文件格式)已经提前编码在工具层里。
 
 ## 快速开始
 

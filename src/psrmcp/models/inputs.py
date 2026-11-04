@@ -52,15 +52,15 @@ class CatalogSearchInput(BaseModel):
     @model_validator(mode="after")
     def _check(self) -> "CatalogSearchInput":
         if self.radius_deg is not None and (self.ra_deg is None or self.dec_deg is None):
-            raise ValueError("radius_deg 必须与 ra_deg、dec_deg 同时出现")
+            raise ValueError("radius_deg must be given together with ra_deg and dec_deg")
         if self.p0_min_s is not None and self.p0_max_s is not None and self.p0_min_s > self.p0_max_s:
-            raise ValueError("p0_min_s 不能大于 p0_max_s")
+            raise ValueError("p0_min_s must not be greater than p0_max_s")
         if self.dm_min is not None and self.dm_max is not None and self.dm_min > self.dm_max:
-            raise ValueError("dm_min 不能大于 dm_max")
+            raise ValueError("dm_min must not be greater than dm_max")
         has_filter = any(v is not None for v in
                          (self.name, self.ra_deg, self.p0_min_s, self.p0_max_s, self.dm_min, self.dm_max))
         if not has_filter and not self.binary_only:
-            raise ValueError("至少提供一个筛选条件(名称/位置/周期/DM/binary_only)")
+            raise ValueError("provide at least one filter (name/position/period/DM/binary_only)")
         return self
 
 
@@ -91,7 +91,7 @@ class EphemerisExportInput(BaseModel):
     @model_validator(mode="after")
     def _check(self) -> "EphemerisExportInput":
         if not self.pulsar and not self.artifact:
-            raise ValueError("pulsar 与 artifact 必须提供其一")
+            raise ValueError("one of pulsar or artifact must be provided")
         return self
 
 
@@ -162,7 +162,7 @@ class RfiMask(BaseModel):
     @model_validator(mode="after")
     def _check(self) -> "RfiMask":
         if (self.channels is None) == (self.auto is None):
-            raise ValueError("mask 必须且只能提供 channels 或 auto 之一")
+            raise ValueError("provide exactly one of mask channels or auto")
         return self
 
 
@@ -209,9 +209,9 @@ class ToaExtractInput(BaseModel):
     @model_validator(mode="after")
     def _check(self) -> "ToaExtractInput":
         if self.mjd_range and self.mjd_range[0] > self.mjd_range[1]:
-            raise ValueError("mjd_range 必须升序")
+            raise ValueError("mjd_range must be ascending")
         if self.freq_range_mhz and self.freq_range_mhz[0] > self.freq_range_mhz[1]:
-            raise ValueError("freq_range_mhz 必须升序")
+            raise ValueError("freq_range_mhz must be ascending")
         return self
 
 

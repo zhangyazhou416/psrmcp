@@ -6,7 +6,7 @@
     "refresh": {
       "type": "boolean",
       "default": false,
-      "description": "重新探测后端，忽略启动时的缓存结果"
+      "description": "Re-probe the backends, ignoring results cached at startup"
     }
   },
   "additionalProperties": false

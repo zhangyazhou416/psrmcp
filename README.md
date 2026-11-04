@@ -6,11 +6,28 @@ An MCP (Model Context Protocol) server wrapping the pulsar astronomy software st
 
 Repositories: <https://gitlab.com/zhangyazhou416/psrmcp> · <https://github.com/zhangyazhou416/psrmcp>
 
-- Overview: [docs/FEATURES.md](docs/FEATURES.md) (what it does, all 19 tools) — Chinese
-- Tutorial: [docs/TUTORIAL.md](docs/TUTORIAL.md) (setup, MCP clients, a full processing-chain walkthrough) — Chinese
-- Design: [docs/DESIGN.md](docs/DESIGN.md) — Chinese
-- Tool contracts: [docs/TOOLS.md](docs/TOOLS.md) (input/output schemas for all 19 tools) — Chinese
-- One-click software stack installer: [scripts/install_pulsar_stack.sh](scripts/install_pulsar_stack.sh) (builds everything into `~/.pulsar`, see [docs/INSTALL.md](docs/INSTALL.md) — Chinese)
+- Overview: [docs/FEATURES.md](docs/FEATURES.md) (what it does, all 19 tools)
+- Tutorial: [docs/TUTORIAL.md](docs/TUTORIAL.md) (setup, MCP clients, a full processing-chain walkthrough)
+- Design: [docs/DESIGN.md](docs/DESIGN.md)
+- Tool contracts: [docs/TOOLS.md](docs/TOOLS.md) (input/output schemas for all 19 tools)
+- One-click software stack installer: [scripts/install_pulsar_stack.sh](scripts/install_pulsar_stack.sh) (builds everything into `~/.pulsar`, see [docs/INSTALL.md](docs/INSTALL.md))
+- Chinese versions of all five docs live alongside as `docs/*-zh.md`
+
+## Why psrmcp?
+
+Same question — *"How many pulsars have P < 5 ms and DM > 200 pc cm⁻³?"* — asked to a general-purpose LLM with web search, and to Claude Code connected to psrmcp:
+
+| | General LLM (web search) | Claude Code + psrmcp |
+|---|---|---|
+| Answer | "no exact number available" — and a suggestion to go query the ATNF catalogue yourself | **54** — computed from the local catalogue, full result set, no truncation |
+| Basis | Anecdotes scattered across papers and web pages | A live catalogue query executed at answer time |
+| Follow-up value | — | Breakdown by population (32 in Terzan 5, 9 from galactic-plane surveys…), extremes (fastest 1.4 ms, DM up to 540), astrophysical interpretation |
+
+| General LLM (web search) | Claude Code + psrmcp |
+|:---:|:---:|
+| <img src="docs/images/query-deepseek.png" alt="DeepSeek: cannot give an exact number, suggests querying ATNF yourself" width="400"/> | <img src="docs/images/query-psrmcp.png" alt="psrmcp: 54 pulsars, with population breakdown and extremes" width="430"/> |
+
+The difference is not model intelligence — it is **where the answer comes from**: recalled from training data (frozen, unverifiable, wrong for anything off the beaten track) versus computed from the live catalogue through a contract-tested tool, with the domain CLI knowledge (flags, column names, file formats) already encoded.
 
 ## Quick start
 

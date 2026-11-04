@@ -16,21 +16,21 @@ from .registry import ToolRegistry, ToolSpec
 def register(reg: ToolRegistry) -> None:
     reg.add(ToolSpec(
         name="artifact_list",
-        description="列出当前 workspace 的产物(可按类型过滤,游标分页)。只读。",
+        description="List artifacts in the current workspace (filter by kind, cursor pagination). Read-only.",
         input_model=ArtifactListInput,
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
         handler=_artifact_list,
     ))
     reg.add(ToolSpec(
         name="job_get",
-        description="查询后台任务状态与结果。只读。",
+        description="Query the status and result of a background job. Read-only.",
         input_model=JobGetInput,
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
         handler=_job_get,
     ))
     reg.add(ToolSpec(
         name="job_cancel",
-        description="取消一个后台任务(SIGTERM,force 时 SIGKILL)。",
+        description="Cancel a background job (SIGTERM, or SIGKILL when force=true).",
         input_model=JobCancelInput,
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False),
         handler=_job_cancel,

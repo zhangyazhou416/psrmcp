@@ -25,10 +25,11 @@ _DM_LINE = re.compile(r"^DM\s+([0-9.eE+-]+)", re.MULTILINE | re.IGNORECASE)
 
 
 def _tempo2_runtime(ctx: AppContext) -> str:
-    """tempo2 runtime 目录:环境变量优先,其次按配置的 tempo2 二进制推导
-    ($PREFIX/bin/tempo2 → $PREFIX/tempo2)。runtime 布局有两种:T2runtime
-    rsync 成目录内容(实测布局,含 clock/ observatory/ 等)或带 T2runtime
-    子目录。"""
+    """tempo2 runtime directory: the env var takes precedence, otherwise it is
+    derived from the configured tempo2 binary ($PREFIX/bin/tempo2 ->
+    $PREFIX/tempo2). Two runtime layouts exist: T2runtime rsynced as directory
+    contents (observed layout, with clock/ observatory/ etc.) or a T2runtime
+    subdirectory."""
     from_env = os.environ.get("TEMPO2")
     if from_env:
         return from_env
@@ -48,7 +49,7 @@ def _tempo2_runtime(ctx: AppContext) -> str:
 def register(reg: ToolRegistry) -> None:
     reg.add(ToolSpec(
         name="dedisperse",
-        description="用 dspsr 对原始数据或 archive 做消色散并折叠,生成新 archive 产物。长任务,支持异步与取消。",
+        description="Dedisperse and fold raw data or an archive with dspsr, producing a new archive artifact. Long task; supports async and cancellation.",
         input_model=DedisperseInput,
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False),
         handler=_run,
@@ -62,7 +63,7 @@ async def _run(ctx: AppContext, inp: DedisperseInput, progress) -> DedisperseRes
     dspsr_info = await ctx.backends.require("dspsr")
     binary = ctx.backends.resolve("dspsr")
     if binary is None:
-        raise PsrmcpError(ErrorCode.ENV_MISSING, "dspsr 路径解析失败")
+        raise PsrmcpError(ErrorCode.ENV_MISSING, "failed to resolve the dspsr path")
 
     source = ctx.resolver.resolve(inp.input, root=inp.root, what="input")
 
@@ -71,7 +72,7 @@ async def _run(ctx: AppContext, inp: DedisperseInput, progress) -> DedisperseRes
     if inp.ephemeris.startswith("art_"):
         par_path = ctx.store.lookup_id(inp.ephemeris)
         if par_path is None:
-            raise PsrmcpError(ErrorCode.NOT_FOUND, f"未知 artifact: {inp.ephemeris}")
+            raise PsrmcpError(ErrorCode.NOT_FOUND, f"unknown artifact: {inp.ephemeris}")
         par_artifact_id = inp.ephemeris
     else:
         try:
@@ -101,21 +102,21 @@ async def _run(ctx: AppContext, inp: DedisperseInput, progress) -> DedisperseRes
     if dm is None:
         raise PsrmcpError(
             ErrorCode.EPHEMERIS_MISMATCH,
-            "无法确定 DM:ephemeris 无 DM 行,输入头也无 DM",
-            hint="提供包含 DM 的 .par,或用 dm_override 显式指定",
+            "cannot determine DM: no DM line in the ephemeris and no DM in the input header",
+            hint="provide a .par containing DM, or set it explicitly via dm_override",
         )
 
     warnings: list[WarningInfo] = []
     if inp.dm_override is not None:
         warnings.append(WarningInfo(
             code="W_DM_OVERRIDE",
-            message=f"DM 显式覆盖为 {dm:.6f}(来源: {dm_source})",
+            message=f"DM explicitly overridden to {dm:.6f} (source: {dm_source})",
             severity="warning",
         ))
     if inp.mode == "coherent" and source.resolved.suffix.lower() == ".fil":
         warnings.append(WarningInfo(
             code="W_COHERENT_UNAVAILABLE",
-            message="filterbank 输入只能做非相干消色散;mode=coherent 被忽略",
+            message="filterbank input only supports incoherent dedispersion; mode=coherent is ignored",
             severity="warning",
         ))
 
@@ -145,10 +146,10 @@ async def _run(ctx: AppContext, inp: DedisperseInput, progress) -> DedisperseRes
     produced = sorted(p for p in job_tmp.glob(f"*.{out_ext}") if p.is_file())
     if run.exit_code != 0 or not produced:
         log_id = log_artifact_from_stderr(ctx, job_key="dspsr", stderr=run.stderr_tail(), argv=argv)
-        detail = f"退出码 {run.exit_code}" if run.exit_code != 0 else "退出码 0 但未产出文件"
+        detail = f"exit code {run.exit_code}" if run.exit_code != 0 else "exit code 0 but no file produced"
         raise PsrmcpError(
             ErrorCode.PROCESS_FAILED,
-            f"dspsr 失败({detail}): {run.stderr_tail(300)}",
+            f"dspsr failed ({detail}): {run.stderr_tail(300)}",
             log_artifact_id=log_id,
         )
     log_id = log_artifact_from_stderr(ctx, job_key="dspsr", stderr=run.stderr_tail(), argv=argv)

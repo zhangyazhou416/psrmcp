@@ -28,8 +28,8 @@ def dedisperse_cmd(
     if dm is not None:
         args += ["-D", f"{dm:.12g}"]
     if ephemeris is not None:
-        # -E: 用 par 生成相位预测器(输入头内嵌 predictor 缺失时必需,
-        # 如 filterbank/无 POLYCO 的 PSRFITS)
+        # -E: build the phase predictor from a par file (required when the
+        # input header lacks one, e.g. filterbank or PSRFITS without POLYCO).
         args += ["-E", str(ephemeris)]
     if nbin is not None:
         args += ["-b", str(nbin)]
@@ -43,7 +43,7 @@ def dedisperse_cmd(
         args += ["-L", str(nsubint)]
     if threads is not None:
         args += ["-t", str(threads)]  # TODO(contract): thread flag spelling.
-    # -O 是输出文件名前缀(不是目录):产物 = <prefix>.<out_ext>
+    # -O is the output filename prefix (not a directory): product = <prefix>.<out_ext>
     args += ["-O", out_prefix]
     args += ["-e", out_ext]
     args.append(source)

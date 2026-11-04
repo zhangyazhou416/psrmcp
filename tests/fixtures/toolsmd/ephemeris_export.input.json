@@ -22,7 +22,7 @@
     },
     "artifact": {
       "type": "string",
-      "description": "已有 .par artifact ID"
+      "description": "Artifact ID of an existing .par"
     },
     "format": {
       "enum": [

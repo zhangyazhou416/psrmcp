@@ -37,22 +37,22 @@ class PathResolver:
 
     def _check_text(self, value: str, what: str) -> None:
         if not value or _CONTROL_CHARS_RE.search(value):
-            raise invalid_input(f"{what} 含非法字符")
+            raise invalid_input(f"{what} contains illegal characters")
         if value.startswith("-"):
-            raise invalid_input(f"{what} 不能以 '-' 开头")
+            raise invalid_input(f"{what} must not start with '-'")
 
-    def resolve(self, reference: str, *, root: str | None = None, what: str = "路径") -> ResolvedInput:
+    def resolve(self, reference: str, *, root: str | None = None, what: str = "path") -> ResolvedInput:
         self._check_text(reference, what)
 
         if reference.startswith("art_"):
             if self._artifact_lookup is None:
-                raise not_found(f"未知 artifact: {reference}")
+                raise not_found(f"unknown artifact: {reference}")
             found = self._artifact_lookup(reference)
             if found is None:
-                raise not_found(f"未知 artifact: {reference}", hint="用 artifact_list 查看现有产物")
+                raise not_found(f"unknown artifact: {reference}", hint="use artifact_list to list existing artifacts")
             if isinstance(found, ResolvedInput):
                 return found
-            # store.lookup_id 返回裸路径,这里包一层补齐 resolver 契约
+            # store.lookup_id returns a bare path; wrap it to satisfy the resolver contract
             path = Path(found).resolve()
             try:
                 size = path.stat().st_size
@@ -63,30 +63,30 @@ class PathResolver:
             )
 
         if _CONTROL_CHARS_RE.search(reference) or ".." in Path(reference).parts:
-            raise path_denied(f"{what} 不允许包含 '..' 或控制字符")
+            raise path_denied(f"{what} must not contain '..' or control characters")
 
         candidate = Path(reference)
         if candidate.is_absolute():
             if not self._cfg.data.allow_absolute_paths:
                 raise path_denied(
-                    f"不接受绝对路径: {reference}",
-                    hint="把文件所在目录加入配置的 data.read_roots,或改用相对路径",
+                    f"absolute paths not accepted: {reference}",
+                    hint="add the file's directory to data.read_roots in the config, or use a relative path",
                 )
             resolved = candidate.resolve()
             for base in self._cfg.data.read_roots:
                 base_resolved = base.expanduser().resolve()
                 if resolved.is_relative_to(base_resolved):
                     return self._finish(reference, resolved, str(base_resolved))
-            raise path_denied(f"路径不在任何 data root 内: {reference}")
+            raise path_denied(f"path not under any data root: {reference}")
 
         roots = [r.expanduser().resolve() for r in self._cfg.data.read_roots]
         if not roots:
-            raise path_denied("未配置 data.read_roots,无法解析相对路径")
+            raise path_denied("data.read_roots not configured; cannot resolve relative paths")
         if root is not None:
             self._check_text(root, "root")
             roots = [r for r in roots if r.name == root or str(r) == root]
             if not roots:
-                raise not_found(f"指定的 root 不存在: {root}")
+                raise not_found(f"specified root not found: {root}")
 
         matches: list[tuple[Path, Path]] = []
         for base in roots:
@@ -96,21 +96,21 @@ class PathResolver:
                     matches.append((base, resolved))
         if not matches:
             if any((base / candidate).resolve().is_relative_to(base) for base in roots):
-                raise not_found(f"文件不存在: {reference}")
-            raise not_found(f"文件不存在或不在 data root 内: {reference}")
+                raise not_found(f"file not found: {reference}")
+            raise not_found(f"file not found or not under any data root: {reference}")
         if len(matches) > 1:
             raise invalid_input(
-                f"路径在多个 data root 中出现: {reference}",
-                hint="用 root 参数指定数据根目录",
+                f"path matches multiple data roots: {reference}",
+                hint="use the root parameter to select the data root",
             )
         base, resolved = matches[0]
         return self._finish(reference, resolved, str(base))
 
     def _finish(self, raw: str, resolved: Path, root: str) -> ResolvedInput:
         if not resolved.exists():
-            raise not_found(f"文件不存在: {raw}")
+            raise not_found(f"file not found: {raw}")
         if not resolved.is_file():
-            raise invalid_input(f"不是常规文件: {raw}")
+            raise invalid_input(f"not a regular file: {raw}")
         return ResolvedInput(
             raw=raw,
             artifact_id=None,

@@ -1,50 +1,52 @@
-# 脉冲星数据处理 MCP Server 工具契约
+# Pulsar Data Processing MCP Server Tool Contracts
 
-- 文档版本：v0.1
-- 日期：2026-10-17
-- 配套文档：[DESIGN.md](./DESIGN.md)
-- MCP 协议：2026-07-28
-- Schema 方言：JSON Schema Draft 2020-12
-- 状态：设计草案，尚未实现
+English | [简体中文](TOOLS-zh.md)
+
+- Document version: v0.1
+- Date: 2026-10-17
+- Companion document: [DESIGN.md](./DESIGN.md)
+- MCP protocol: 2026-07-28
+- Schema dialect: JSON Schema Draft 2020-12
+- Status: design draft, not yet implemented
 
 ---
 
-## 1. 通用约定
+## 1. General Conventions
 
-### 1.1 命名与单位
+### 1.1 Naming and Units
 
-- 工具名、参数名统一使用 `snake_case`
-- 所有输入对象设置 `additionalProperties: false`
-- 数值字段在名称中携带单位：
-  - 时间：`_s`、`_ms`、`_us`
-  - 频率：`_mhz`
-  - 角度：`_deg`
-  - 时间坐标：`_mjd`
-  - 大小：`_bytes`
-- 未注明时间系统的 MJD 默认是 UTC
-- 时间字符串使用 RFC 3339 / ISO 8601
-- 文本字段设置合理的 `minLength` / `maxLength`，拒绝控制字符
+- Tool names and parameter names uniformly use `snake_case`
+- All input objects set `additionalProperties: false`
+- Numeric fields carry their unit in the name:
+  - Time: `_s`, `_ms`, `_us`
+  - Frequency: `_mhz`
+  - Angle: `_deg`
+  - Time coordinate: `_mjd`
+  - Size: `_bytes`
+- MJD values default to UTC unless the time system is stated otherwise
+- Time strings use RFC 3339 / ISO 8601
+- Text fields set sensible `minLength` / `maxLength` and reject control characters
 
-### 1.2 路径与 ID
+### 1.2 Paths and IDs
 
-- `artifact_id`：`art_` 前缀，工作区内的不可变产物
-- `job_id`：`job_` 前缀，异步任务
-- `archive`、`par`、`tim` 等参数可以接受：
-  - artifact ID
-  - 配置的 `read_roots` 下的相对路径
-- 当相对路径可能匹配多个 root 时，用可选的 `root` 参数指定
-- 绝对路径仅在 `allow_absolute_paths = true` 时接受，且仍必须位于白名单内
-- `output_name` 只是人类可读标签，服务器生成唯一路径，不覆盖已有产物
-- 路径参数禁止包含 `..`、控制字符、NUL
+- `artifact_id`: `art_` prefix; an immutable artifact inside the workspace
+- `job_id`: `job_` prefix; an asynchronous job
+- Parameters such as `archive`, `par`, `tim` accept:
+  - an artifact ID
+  - a relative path under the configured `read_roots`
+- When a relative path could match multiple roots, use the optional `root` parameter to disambiguate
+- Absolute paths are accepted only when `allow_absolute_paths = true`, and must still be inside the allowlist
+- `output_name` is only a human-readable label; the server generates a unique path and never overwrites an existing artifact
+- Path parameters must not contain `..`, control characters, or NUL
 
-### 1.3 Tool 结果封装
+### 1.3 Tool Result Envelope
 
-MCP `tools/call` 返回：
+An MCP `tools/call` returns:
 
 ```json
 {
   "content": [
-    {"type": "text", "text": "简短的人类可读摘要"}
+    {"type": "text", "text": "Brief human-readable summary"}
   ],
   "structuredContent": {
     "result_type": "completed"
@@ -53,28 +55,28 @@ MCP `tools/call` 返回：
 }
 ```
 
-约定：
+Conventions:
 
-- `content`：Markdown 摘要，便于直接展示
-- `structuredContent`：严格符合本文件的 `outputSchema`
-- 图像通过 `content` 中的 `image` block 或 `resource_link` 返回
-- 错误时 `isError: true`，`structuredContent.error` 为 `ErrorBody`
-- 不在错误信息中返回完整 stderr；完整日志放入 `log_artifact_id`
+- `content`: a Markdown summary, suitable for direct display
+- `structuredContent`: strictly conforms to the `outputSchema` in this document
+- Images are returned via an `image` block or `resource_link` in `content`
+- On error, `isError: true` and `structuredContent.error` is an `ErrorBody`
+- Full stderr is never returned in the error message; the complete log goes into `log_artifact_id`
 
-### 1.4 长任务
+### 1.4 Long-Running Tasks
 
-可能耗时较长的工具支持 `execution_mode`：
+Tools that may take a long time support `execution_mode`:
 
-- `auto`（默认）：预计超过 `long_job_threshold_s` 时转异步
-- `sync`：同步等待，超过 `job_timeout_s` 返回 `E_TIMEOUT`
-- `async`：立即返回 `result_type: "accepted"` 和 `JobRef`
+- `auto` (default): switches to async when the estimated runtime exceeds `long_job_threshold_s`
+- `sync`: waits synchronously; returns `E_TIMEOUT` once `job_timeout_s` is exceeded
+- `async`: returns `result_type: "accepted"` and a `JobRef` immediately
 
-异步结果有两种承载方式：
+Async results are carried in one of two ways:
 
-1. **MCP Tasks 扩展可用**：协议层返回 `CreateTaskResult`，客户端通过 `tasks/get`、`tasks/cancel` 操作；最终 `result` 使用本文件的 completed schema
-2. **Tasks 扩展不可用**：工具返回 `accepted` + `JobRef`，客户端用 `job_get` / `job_cancel` 轮询和取消
+1. **MCP Tasks extension available**: the protocol layer returns a `CreateTaskResult`; the client operates via `tasks/get` and `tasks/cancel`; the final `result` uses the completed schema in this document
+2. **Tasks extension unavailable**: the tool returns `accepted` + `JobRef`; the client polls and cancels with `job_get` / `job_cancel`
 
-`JobRef.status`：
+`JobRef.status`:
 
 - `queued`
 - `working`
@@ -82,11 +84,11 @@ MCP `tools/call` 返回：
 - `completed`
 - `failed`
 - `cancelled`
-- `interrupted`（服务重启后本地进程丢失）
+- `interrupted` (local process lost after a server restart)
 
-### 1.5 错误处理
+### 1.5 Error Handling
 
-错误结果：
+An error result:
 
 ```json
 {
@@ -96,7 +98,7 @@ MCP `tools/call` 返回：
     "error": {
       "code": "E_EPHEMERIS_MISMATCH",
       "message": "Ephemeris source J0437-4715 does not match archive source J1744-1134",
-      "hint": "请提供与观测匹配的 .par 文件，或显式设置 dm_override",
+      "hint": "Provide a .par file that matches the observation, or set dm_override explicitly",
       "retryable": false,
       "details": {},
       "log_artifact_id": "art_..."
@@ -105,18 +107,18 @@ MCP `tools/call` 返回：
 }
 ```
 
-原则：
+Principles:
 
-- 错误码稳定，不随实现细节变化
-- `retryable` 明确告诉客户端是否值得重试
-- 用户可修复的问题必须给出 `hint`
-- 科学数据不匹配属于错误，不静默继续
+- Error codes are stable and do not change with implementation details
+- `retryable` tells the client explicitly whether a retry is worthwhile
+- Problems the user can fix must include a `hint`
+- Scientific data mismatches are errors; never continue silently
 
 ---
 
-## 2. 公共类型
+## 2. Common Types
 
-以下 `$defs` 由所有工具 schema 引用。实现时可用 Pydantic 模型生成并展开，文档中用 `$ref` 表示。
+The following `$defs` are referenced by all tool schemas. Implementations may generate and expand them from Pydantic models; this document expresses them with `$ref`.
 
 ```json
 {
@@ -158,7 +160,7 @@ MCP `tools/call` 返回：
         "format": {"type": "string", "minLength": 1},
         "path": {
           "type": "string",
-          "description": "工作区相对路径；客户端不应假设该路径可直接访问"
+          "description": "Workspace-relative path; clients must not assume the path is directly accessible"
         },
         "size_bytes": {"type": "integer", "minimum": 0},
         "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
@@ -303,7 +305,7 @@ MCP `tools/call` 返回：
         "version": {"type": ["string", "null"]},
         "reason": {
           "type": ["string", "null"],
-          "description": "不可用时的原因"
+          "description": "Reason when unavailable"
         },
         "capabilities": {
           "type": "array",
@@ -365,74 +367,74 @@ MCP `tools/call` 返回：
 
 ---
 
-## 3. 错误码
+## 3. Error Codes
 
-| 错误码 | 含义 | 可重试 | 典型处理 |
+| Error code | Meaning | Retryable | Typical handling |
 |---|---|---|---|
-| `E_CONFIG` | 配置无效或缺失 | 否 | 修正配置文件并重启 |
-| `E_ENV_MISSING` | 后端二进制/Python 包不可用 | 否 | 安装或启用对应后端 |
-| `E_INVALID_INPUT` | Schema 或语义校验失败 | 否 | 修正参数 |
-| `E_NOT_FOUND` | artifact、文件、脉冲星不存在 | 否 | 检查 ID、路径或名称 |
-| `E_PATH_DENIED` | 路径不在白名单内 | 否 | 使用允许的 data root |
-| `E_FORMAT_UNSUPPORTED` | 数据格式或版本不支持 | 否 | 转换格式或启用对应后端 |
-| `E_SOURCE_MISMATCH` | 输入数据源名不一致 | 否 | 确认输入是否属于同一脉冲星 |
-| `E_EPHEMERIS_MISMATCH` | ephemeris 与观测不匹配 | 否 | 提供正确的 `.par` |
-| `E_OUTPUT_CONFLICT` | 输出命名冲突且不允许覆盖 | 视情况 | 换一个 `output_name` |
-| `E_PROCESS_FAILED` | 后端命令执行失败 | 视情况 | 查看 `log_artifact_id` |
-| `E_TIMEOUT` | 超过任务超时 | 是 | 改用 async 或减少数据量 |
-| `E_CANCELLED` | 任务被取消 | 是 | 确认后重跑 |
-| `E_QUOTA_EXCEEDED` | 磁盘/内存/文件大小超限 | 否 | 清理工作区或调整限额 |
-| `E_TASK_NOT_FOUND` | job/task ID 不存在或已过期 | 否 | 重新提交任务 |
-| `E_JOB_NOT_RUNNING` | 对已结束任务执行取消 | 否 | 查询状态即可 |
-| `E_VERSION_INCOMPATIBLE` | 工具/数据版本不兼容 | 否 | 统一工具链版本 |
-| `E_INTERNAL` | 未预期的服务器错误 | 视情况 | 携带日志报告问题 |
+| `E_CONFIG` | Invalid or missing configuration | No | Fix the configuration file and restart |
+| `E_ENV_MISSING` | Backend binary / Python package unavailable | No | Install or enable the corresponding backend |
+| `E_INVALID_INPUT` | Schema or semantic validation failed | No | Correct the parameters |
+| `E_NOT_FOUND` | Artifact, file, or pulsar does not exist | No | Check the ID, path, or name |
+| `E_PATH_DENIED` | Path is not inside the allowlist | No | Use an allowed data root |
+| `E_FORMAT_UNSUPPORTED` | Data format or version unsupported | No | Convert the format or enable the corresponding backend |
+| `E_SOURCE_MISMATCH` | Input data source names disagree | No | Confirm the inputs belong to the same pulsar |
+| `E_EPHEMERIS_MISMATCH` | Ephemeris does not match the observation | No | Provide the correct `.par` |
+| `E_OUTPUT_CONFLICT` | Output name conflicts and overwriting is not allowed | Depends | Use a different `output_name` |
+| `E_PROCESS_FAILED` | Backend command execution failed | Depends | Inspect `log_artifact_id` |
+| `E_TIMEOUT` | Job exceeded its timeout | Yes | Switch to async or reduce the data volume |
+| `E_CANCELLED` | Job was cancelled | Yes | Confirm and rerun |
+| `E_QUOTA_EXCEEDED` | Disk / memory / file-size quota exceeded | No | Clean up the workspace or adjust the limits |
+| `E_TASK_NOT_FOUND` | job/task ID does not exist or has expired | No | Resubmit the job |
+| `E_JOB_NOT_RUNNING` | Cancel requested on a job that already finished | No | Just query its status |
+| `E_VERSION_INCOMPATIBLE` | Tool/data version incompatible | No | Align toolchain versions |
+| `E_INTERNAL` | Unexpected server error | Depends | Report the issue with the logs attached |
 
 ---
 
-## 4. 工具索引与 Annotations
+## 4. Tool Index and Annotations
 
-| 工具 | `readOnlyHint` | `destructiveHint` | `idempotentHint` | `openWorldHint` | 长任务 |
+| Tool | `readOnlyHint` | `destructiveHint` | `idempotentHint` | `openWorldHint` | Long-running |
 |---|---|---|---|---|---|
-| `pulsar_environment` | true | false | true | false | 否 |
-| `data_find` | true | false | true | false | 否 |
-| `catalog_search` | true | false | true | true | 否 |
-| `catalog_get` | true | false | true | true | 否 |
-| `ephemeris_export` | false | false | true | true | 否 |
-| `archive_inspect` | true | false | true | false | 否 |
-| `archive_convert` | false | false | true | false | 否 |
-| `archive_merge` | false | false | true | false | 是 |
-| `dedisperse` | false | false | true | false | 是 |
-| `rfi_scan` | true | false | true | false | 否 |
-| `rfi_zap` | false | false | true | false | 否 |
-| `profile_standardize` | false | false | true | false | 否 |
-| `profile_measure` | true | false | true | false | 否 |
-| `toa_extract` | false | false | true | false | 是 |
-| `timing_fit` | false | false | true | false | 是 |
-| `timing_diagnose` | true | false | true | false | 否 |
-| `artifact_list` | true | false | true | false | 否 |
-| `job_get` | true | false | true | false | 否 |
-| `job_cancel` | false | false | false | false | 否 |
+| `pulsar_environment` | true | false | true | false | no |
+| `data_find` | true | false | true | false | no |
+| `catalog_search` | true | false | true | true | no |
+| `catalog_get` | true | false | true | true | no |
+| `ephemeris_export` | false | false | true | true | no |
+| `archive_inspect` | true | false | true | false | no |
+| `archive_convert` | false | false | true | false | no |
+| `archive_merge` | false | false | true | false | yes |
+| `dedisperse` | false | false | true | false | yes |
+| `rfi_scan` | true | false | true | false | no |
+| `rfi_zap` | false | false | true | false | no |
+| `profile_standardize` | false | false | true | false | no |
+| `profile_measure` | true | false | true | false | no |
+| `toa_extract` | false | false | true | false | yes |
+| `timing_fit` | false | false | true | false | yes |
+| `timing_diagnose` | true | false | true | false | no |
+| `artifact_list` | true | false | true | false | no |
+| `job_get` | true | false | true | false | no |
+| `job_cancel` | false | false | false | false | no |
 
-说明：
+Notes:
 
-- `idempotentHint` 表示相同输入和参数会得到等价产物；产物 ID 可能不同，但内容可缓存复用
-- 所有工具都**不会覆盖输入文件**
-- `catalog_search` / `catalog_get` / `ephemeris_export` 在 online 模式下会访问外部星表，因此标记 `openWorldHint: true`
-- 未来 `artifact_delete` 将标记 `destructiveHint: true`
+- `idempotentHint` means identical inputs and parameters yield equivalent artifacts; artifact IDs may differ, but the content is cacheable and reusable
+- No tool **ever overwrites an input file**
+- `catalog_search` / `catalog_get` / `ephemeris_export` access the external catalogue in online mode, hence `openWorldHint: true`
+- The future `artifact_delete` will be marked `destructiveHint: true`
 
 ---
 
-## 5. 工具详细契约
+## 5. Detailed Tool Contracts
 
 ### 5.1 `pulsar_environment`
 
-**用途**：返回服务器版本、MCP 协议版本、后端可用性、数据根目录、工作区和资源限额。建议作为每次会话的第一个调用。
+**Purpose**: Returns the server version, MCP protocol version, backend availability, data roots, workspace, and resource limits. Recommended as the first call of every session.
 
-**后端**：环境探测  
-**长任务**：否  
-**Annotations**：`readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+**Backend**: environment probing  
+**Long-running**: no  
+**Annotations**: `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
 
-#### 输入 Schema
+#### Input Schema
 
 ```json
 {
@@ -443,14 +445,14 @@ MCP `tools/call` 返回：
     "refresh": {
       "type": "boolean",
       "default": false,
-      "description": "重新探测后端，忽略启动时的缓存结果"
+      "description": "Re-probe the backends, ignoring results cached at startup"
     }
   },
   "additionalProperties": false
 }
 ```
 
-#### 输出 Schema
+#### Output Schema
 
 ```json
 {
@@ -521,7 +523,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 错误码
+#### Error Codes
 
 `E_CONFIG`, `E_INTERNAL`
 
@@ -529,13 +531,13 @@ MCP `tools/call` 返回：
 
 ### 5.2 `data_find`
 
-**用途**：在配置的 `read_roots` 内按 glob 查找数据文件，并给出格式初判。不会读取或修改文件内容。
+**Purpose**: Finds data files by glob within the configured `read_roots` and makes a first-pass format guess. Never reads or modifies file contents.
 
-**后端**：文件系统  
-**长任务**：否  
-**Annotations**：`readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+**Backend**: filesystem  
+**Long-running**: no  
+**Annotations**: `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
 
-#### 输入 Schema
+#### Input Schema
 
 ```json
 {
@@ -548,11 +550,11 @@ MCP `tools/call` 返回：
       "type": "string",
       "minLength": 1,
       "maxLength": 256,
-      "description": "glob 模式，例如 '*.ar'、'J0437*'、'**/*.fits'"
+      "description": "Glob pattern, e.g. '*.ar', 'J0437*', '**/*.fits'"
     },
     "root": {
       "type": "string",
-      "description": "read_roots 下的子目录；省略时搜索所有 root"
+      "description": "Subdirectory under read_roots; omit to search all roots"
     },
     "max_depth": {
       "type": "integer",
@@ -583,7 +585,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 输出 Schema
+#### Output Schema
 
 ```json
 {
@@ -634,7 +636,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 错误码
+#### Error Codes
 
 `E_INVALID_INPUT`, `E_PATH_DENIED`, `E_NOT_FOUND`
 
@@ -642,13 +644,13 @@ MCP `tools/call` 返回：
 
 ### 5.3 `catalog_search`
 
-**用途**：查询 ATNF/psrcat 星表。支持名称、位置锥、周期、DM 和双星筛选。至少提供一个筛选条件。
+**Purpose**: Queries the ATNF/psrcat catalogue. Supports filtering by name, positional cone, period, DM, and binarity. At least one filter must be given.
 
-**后端**：psrcat / psrqpy / 本地缓存  
-**长任务**：否  
-**Annotations**：`readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=true`
+**Backend**: psrcat / psrqpy / local cache  
+**Long-running**: no  
+**Annotations**: `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=true`
 
-#### 输入 Schema
+#### Input Schema
 
 ```json
 {
@@ -705,14 +707,14 @@ MCP `tools/call` 返回：
 }
 ```
 
-语义校验（在 JSON Schema 之外）：
+Semantic validation (beyond JSON Schema):
 
-- `radius_deg` 必须与 `ra_deg`、`dec_deg` 同时出现
+- `radius_deg` must appear together with `ra_deg` and `dec_deg`
 - `p0_min_s <= p0_max_s`
 - `dm_min <= dm_max`
-- 至少提供 `name`、位置条件、周期条件、DM 条件或 `binary_only=true` 之一
+- At least one of `name`, a position constraint, a period constraint, a DM constraint, or `binary_only=true` must be provided
 
-#### 输出 Schema
+#### Output Schema
 
 ```json
 {
@@ -738,7 +740,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 错误码
+#### Error Codes
 
 `E_INVALID_INPUT`, `E_ENV_MISSING`, `E_NOT_FOUND`
 
@@ -746,13 +748,13 @@ MCP `tools/call` 返回：
 
 ### 5.4 `catalog_get`
 
-**用途**：按名称精确获取单个脉冲星记录，并判断是否可以生成 ephemeris。
+**Purpose**: Fetches a single pulsar record by exact name and determines whether an ephemeris can be produced.
 
-**后端**：psrcat / psrqpy / 本地缓存  
-**长任务**：否  
-**Annotations**：`readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=true`
+**Backend**: psrcat / psrqpy / local cache  
+**Long-running**: no  
+**Annotations**: `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=true`
 
-#### 输入 Schema
+#### Input Schema
 
 ```json
 {
@@ -765,14 +767,14 @@ MCP `tools/call` 返回：
       "type": "string",
       "minLength": 1,
       "maxLength": 64,
-      "description": "例如 'J0437-4715' 或 'B1937+21'"
+      "description": "For example 'J0437-4715' or 'B1937+21'"
     }
   },
   "additionalProperties": false
 }
 ```
 
-#### 输出 Schema
+#### Output Schema
 
 ```json
 {
@@ -800,7 +802,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 错误码
+#### Error Codes
 
 `E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`
 
@@ -808,13 +810,13 @@ MCP `tools/call` 返回：
 
 ### 5.5 `ephemeris_export`
 
-**用途**：从星表记录或已有 `.par` 产物生成 TEMPO/TEMPO2 格式 ephemeris。转换可能丢失信息，必须返回 warnings。
+**Purpose**: Produces a TEMPO/TEMPO2-format ephemeris from a catalogue record or an existing `.par` artifact. The conversion may lose information and must return warnings.
 
-**后端**：psrcat / PINT  
-**长任务**：否  
-**Annotations**：`readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=true`
+**Backend**: psrcat / PINT  
+**Long-running**: no  
+**Annotations**: `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=true`
 
-#### 输入 Schema
+#### Input Schema
 
 ```json
 {
@@ -833,7 +835,7 @@ MCP `tools/call` 返回：
     },
     "artifact": {
       "type": "string",
-      "description": "已有 .par artifact ID"
+      "description": "Artifact ID of an existing .par"
     },
     "format": {
       "enum": ["tempo1", "tempo2"],
@@ -861,7 +863,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 输出 Schema
+#### Output Schema
 
 ```json
 {
@@ -883,7 +885,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 错误码
+#### Error Codes
 
 `E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_VERSION_INCOMPATIBLE`
 
@@ -891,13 +893,13 @@ MCP `tools/call` 返回：
 
 ### 5.6 `archive_inspect`
 
-**用途**：读取 PSRFITS/PSRARCHIVE 的元数据、维度和基本统计，不修改文件。处理任何数据前应先调用。
+**Purpose**: Reads PSRFITS/PSRARCHIVE metadata, dimensions, and basic statistics without modifying the file. Should be called before processing any data.
 
-**后端**：psrchive  
-**长任务**：否  
-**Annotations**：`readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+**Backend**: psrchive  
+**Long-running**: no  
+**Annotations**: `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
 
-#### 输入 Schema
+#### Input Schema
 
 ```json
 {
@@ -908,11 +910,11 @@ MCP `tools/call` 返回：
   "properties": {
     "archive": {
       "type": "string",
-      "description": "artifact ID 或 read root 下的相对路径"
+      "description": "Artifact ID or relative path under a read root"
     },
     "root": {
       "type": "string",
-      "description": "当 archive 是相对路径时指定 data root"
+      "description": "Specifies the data root when archive is a relative path"
     },
     "include_stats": {"type": "boolean", "default": true},
     "include_ephemeris": {"type": "boolean", "default": true},
@@ -928,7 +930,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 输出 Schema
+#### Output Schema
 
 ```json
 {
@@ -1034,7 +1036,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 错误码
+#### Error Codes
 
 `E_INVALID_INPUT`, `E_NOT_FOUND`, `E_PATH_DENIED`, `E_FORMAT_UNSUPPORTED`, `E_PROCESS_FAILED`
 
@@ -1042,13 +1044,13 @@ MCP `tools/call` 返回：
 
 ### 5.7 `archive_convert`
 
-**用途**：在 PSRFITS、PSRARCHIVE、SIGPROC、ASCII 之间转换。输入保持不变，输出为新 artifact。
+**Purpose**: Converts between PSRFITS, PSRARCHIVE, SIGPROC, and ASCII. The input is left untouched; the output is a new artifact.
 
-**后端**：psrconv  
-**长任务**：否（超大文件可转异步）  
-**Annotations**：`readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+**Backend**: psrconv  
+**Long-running**: no (very large files may be switched to async)  
+**Annotations**: `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
 
-#### 输入 Schema
+#### Input Schema
 
 ```json
 {
@@ -1059,7 +1061,7 @@ MCP `tools/call` 返回：
   "properties": {
     "archive": {
       "type": "string",
-      "description": "artifact ID 或 read root 下的相对路径"
+      "description": "Artifact ID or relative path under a read root"
     },
     "root": {"type": "string"},
     "output_format": {
@@ -1074,7 +1076,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 输出 Schema
+#### Output Schema
 
 ```json
 {
@@ -1094,7 +1096,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 错误码
+#### Error Codes
 
 `E_INVALID_INPUT`, `E_NOT_FOUND`, `E_FORMAT_UNSUPPORTED`, `E_PROCESS_FAILED`, `E_QUOTA_EXCEEDED`
 
@@ -1102,13 +1104,13 @@ MCP `tools/call` 返回：
 
 ### 5.8 `archive_merge`
 
-**用途**：合并多个 archive。默认要求源名一致；不一致时返回 `E_SOURCE_MISMATCH`，除非显式关闭检查。
+**Purpose**: Merges multiple archives. Source names must agree by default; on mismatch returns `E_SOURCE_MISMATCH` unless the check is explicitly disabled.
 
-**后端**：psradd  
-**长任务**：是  
-**Annotations**：`readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+**Backend**: psradd  
+**Long-running**: yes  
+**Annotations**: `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
 
-#### 输入 Schema
+#### Input Schema
 
 ```json
 {
@@ -1139,7 +1141,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 输出 Schema
+#### Output Schema
 
 ```json
 {
@@ -1182,7 +1184,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 错误码
+#### Error Codes
 
 `E_INVALID_INPUT`, `E_NOT_FOUND`, `E_SOURCE_MISMATCH`, `E_PROCESS_FAILED`, `E_TIMEOUT`, `E_CANCELLED`, `E_QUOTA_EXCEEDED`
 
@@ -1190,13 +1192,13 @@ MCP `tools/call` 返回：
 
 ### 5.9 `dedisperse`
 
-**用途**：使用 dspsr 对数据进行相干或非相干消色散并折叠。相干消色散需要匹配的 ephemeris。
+**Purpose**: Applies coherent or incoherent dedispersion and folds the data with dspsr. Coherent dedispersion requires a matching ephemeris.
 
-**后端**：dspsr  
-**长任务**：是  
-**Annotations**：`readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+**Backend**: dspsr  
+**Long-running**: yes  
+**Annotations**: `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
 
-#### 输入 Schema
+#### Input Schema
 
 ```json
 {
@@ -1207,12 +1209,12 @@ MCP `tools/call` 返回：
   "properties": {
     "input": {
       "type": "string",
-      "description": "原始数据或 archive 的 artifact ID / 相对路径"
+      "description": "Artifact ID / relative path of raw data or an archive"
     },
     "root": {"type": "string"},
     "ephemeris": {
       "type": "string",
-      "description": "artifact ID、read root 下的 .par 路径，或脉冲星名"
+      "description": "An artifact ID, a .par path under a read root, or a pulsar name"
     },
     "mode": {
       "enum": ["coherent", "incoherent"],
@@ -1221,7 +1223,7 @@ MCP `tools/call` 返回：
     "dm_override": {
       "type": "number",
       "exclusiveMinimum": 0,
-      "description": "显式覆盖 DM；会写入 provenance"
+      "description": "Explicit DM override; recorded in provenance"
     },
     "output_format": {
       "enum": ["psrfits", "psrarchive"],
@@ -1257,7 +1259,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 输出 Schema
+#### Output Schema
 
 ```json
 {
@@ -1303,7 +1305,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 错误码
+#### Error Codes
 
 `E_ENV_MISSING`, `E_INVALID_INPUT`, `E_NOT_FOUND`, `E_EPHEMERIS_MISMATCH`, `E_FORMAT_UNSUPPORTED`, `E_PROCESS_FAILED`, `E_TIMEOUT`, `E_CANCELLED`, `E_QUOTA_EXCEEDED`
 
@@ -1311,13 +1313,13 @@ MCP `tools/call` 返回：
 
 ### 5.10 `rfi_scan`
 
-**用途**：分析 archive 的通道统计，给出建议的坏通道掩膜。只读，不修改数据。
+**Purpose**: Analyses per-channel statistics of an archive and produces a suggested bad-channel mask. Read-only; does not modify data.
 
-**后端**：psrchive / clfd  
-**长任务**：否  
-**Annotations**：`readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+**Backend**: psrchive / clfd  
+**Long-running**: no  
+**Annotations**: `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
 
-#### 输入 Schema
+#### Input Schema
 
 ```json
 {
@@ -1344,7 +1346,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 输出 Schema
+#### Output Schema
 
 ```json
 {
@@ -1370,7 +1372,7 @@ MCP `tools/call` 返回：
     "statistics": {
       "type": "object",
       "additionalProperties": true,
-      "description": "不同 method 返回的统计量不同，至少包含 flagged_count 和 threshold"
+      "description": "Statistics differ by method; always includes flagged_count and threshold at minimum"
     },
     "plot_artifact": {"type": ["string", "null"]},
     "warnings": {
@@ -1382,7 +1384,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 错误码
+#### Error Codes
 
 `E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_FORMAT_UNSUPPORTED`, `E_PROCESS_FAILED`
 
@@ -1390,13 +1392,13 @@ MCP `tools/call` 返回：
 
 ### 5.11 `rfi_zap`
 
-**用途**：对 archive 应用通道掩膜，生成新的 archive。支持显式通道列表或自动方法。
+**Purpose**: Applies a channel mask to an archive, producing a new archive. Supports an explicit channel list or an automatic method.
 
-**后端**：psrchive / clfd  
-**长任务**：否  
-**Annotations**：`readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+**Backend**: psrchive / clfd  
+**Long-running**: no  
+**Annotations**: `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
 
-#### 输入 Schema
+#### Input Schema
 
 ```json
 {
@@ -1457,7 +1459,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 输出 Schema
+#### Output Schema
 
 ```json
 {
@@ -1485,7 +1487,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 错误码
+#### Error Codes
 
 `E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`, `E_QUOTA_EXCEEDED`
 
@@ -1493,13 +1495,13 @@ MCP `tools/call` 返回：
 
 ### 5.12 `profile_standardize`
 
-**用途**：从 archive 生成标准轮廓，供 TOA 提取使用。
+**Purpose**: Produces a standard profile from an archive for use in TOA extraction.
 
-**后端**：pas  
-**长任务**：否  
-**Annotations**：`readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+**Backend**: pas  
+**Long-running**: no  
+**Annotations**: `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
 
-#### 输入 Schema
+#### Input Schema
 
 ```json
 {
@@ -1526,7 +1528,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 输出 Schema
+#### Output Schema
 
 ```json
 {
@@ -1548,7 +1550,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 错误码
+#### Error Codes
 
 `E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`, `E_QUOTA_EXCEEDED`
 
@@ -1556,13 +1558,13 @@ MCP `tools/call` 返回：
 
 ### 5.13 `profile_measure`
 
-**用途**：测量 archive 的轮廓指标，例如 S/N、FWHM、流量和偏振参数。只读。
+**Purpose**: Measures profile metrics of an archive, such as S/N, FWHM, flux density, and polarization parameters. Read-only.
 
-**后端**：psrstat / vap / psrchive Python 绑定  
-**长任务**：否  
-**Annotations**：`readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+**Backend**: psrstat / vap / psrchive Python bindings  
+**Long-running**: no  
+**Annotations**: `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
 
-#### 输入 Schema
+#### Input Schema
 
 ```json
 {
@@ -1575,7 +1577,7 @@ MCP `tools/call` 返回：
     "root": {"type": "string"},
     "standard_profile": {
       "type": "string",
-      "description": "可选，标准轮廓 artifact ID"
+      "description": "Optional; artifact ID of a standard profile"
     },
     "metrics": {
       "type": "array",
@@ -1595,7 +1597,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 输出 Schema
+#### Output Schema
 
 ```json
 {
@@ -1637,7 +1639,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 错误码
+#### Error Codes
 
 `E_INVALID_INPUT`, `E_NOT_FOUND`, `E_FORMAT_UNSUPPORTED`, `E_PROCESS_FAILED`
 
@@ -1645,13 +1647,13 @@ MCP `tools/call` 返回：
 
 ### 5.14 `toa_extract`
 
-**用途**：使用标准轮廓从 archive 提取 TOA，生成 TEMPO `.tim` 文件。
+**Purpose**: Extracts TOAs from an archive against a standard profile and produces a TEMPO `.tim` file.
 
-**后端**：pat  
-**长任务**：是  
-**Annotations**：`readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+**Backend**: pat  
+**Long-running**: yes  
+**Annotations**: `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
 
-#### 输入 Schema
+#### Input Schema
 
 ```json
 {
@@ -1694,12 +1696,12 @@ MCP `tools/call` 返回：
 }
 ```
 
-语义校验：
+Semantic validation:
 
 - `mjd_range[0] <= mjd_range[1]`
 - `freq_range_mhz[0] <= freq_range_mhz[1]`
 
-#### 输出 Schema
+#### Output Schema
 
 ```json
 {
@@ -1745,7 +1747,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 错误码
+#### Error Codes
 
 `E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`, `E_TIMEOUT`, `E_CANCELLED`, `E_QUOTA_EXCEEDED`
 
@@ -1753,13 +1755,13 @@ MCP `tools/call` 返回：
 
 ### 5.15 `timing_fit`
 
-**用途**：使用 PINT 或 tempo2 对 `.par` + `.tim` 做计时拟合，返回更新后的 `.par`、拟合统计、残差和残差图。
+**Purpose**: Runs a timing fit on `.par` + `.tim` with PINT or tempo2, returning the updated `.par`, fit statistics, residuals, and residual plots.
 
-**后端**：PINT worker / tempo2  
-**长任务**：是  
-**Annotations**：`readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+**Backend**: PINT worker / tempo2  
+**Long-running**: yes  
+**Annotations**: `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
 
-#### 输入 Schema
+#### Input Schema
 
 ```json
 {
@@ -1770,11 +1772,11 @@ MCP `tools/call` 返回：
   "properties": {
     "par": {
       "type": "string",
-      "description": "artifact ID 或 read root 下的 .par 相对路径"
+      "description": "Artifact ID or .par relative path under a read root"
     },
     "tim": {
       "type": "string",
-      "description": "artifact ID 或 read root 下的 .tim 相对路径"
+      "description": "Artifact ID or .tim relative path under a read root"
     },
     "root": {"type": "string"},
     "backend": {
@@ -1788,7 +1790,7 @@ MCP `tools/call` 返回：
         "pattern": "^[A-Za-z0-9_]+$"
       },
       "maxItems": 50,
-      "description": "缺省使用 par 文件中的 fit flags；显式提供时必须能在 par 中解析"
+      "description": "Defaults to the fit flags in the par file; when given explicitly, every entry must resolve in the par"
     },
     "weighting": {
       "enum": ["uniform", "1/sigma^2"],
@@ -1811,7 +1813,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 输出 Schema
+#### Output Schema
 
 ```json
 {
@@ -1882,7 +1884,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 错误码
+#### Error Codes
 
 `E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_VERSION_INCOMPATIBLE`, `E_PROCESS_FAILED`, `E_TIMEOUT`, `E_CANCELLED`
 
@@ -1890,13 +1892,13 @@ MCP `tools/call` 返回：
 
 ### 5.16 `timing_diagnose`
 
-**用途**：对已有 `.par` + `.tim` 做残差和模型诊断，不重新拟合。可检查离群点、DM 变化、JUMP 和残差分布。
+**Purpose**: Runs residual and model diagnostics on existing `.par` + `.tim` without refitting. Can check outliers, DM variations, JUMPs, and the residual distribution.
 
-**后端**：PINT / tempo2  
-**长任务**：否  
-**Annotations**：`readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+**Backend**: PINT / tempo2  
+**Long-running**: no  
+**Annotations**: `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
 
-#### 输入 Schema
+#### Input Schema
 
 ```json
 {
@@ -1944,7 +1946,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 输出 Schema
+#### Output Schema
 
 ```json
 {
@@ -2001,7 +2003,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 错误码
+#### Error Codes
 
 `E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_VERSION_INCOMPATIBLE`, `E_PROCESS_FAILED`
 
@@ -2009,13 +2011,13 @@ MCP `tools/call` 返回：
 
 ### 5.17 `artifact_list`
 
-**用途**：列出当前工作区的 artifact，支持按类型、时间和游标分页。
+**Purpose**: Lists artifacts in the current workspace, with paging by kind, time, and cursor.
 
-**后端**：ArtifactStore  
-**长任务**：否  
-**Annotations**：`readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+**Backend**: ArtifactStore  
+**Long-running**: no  
+**Annotations**: `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
 
-#### 输入 Schema
+#### Input Schema
 
 ```json
 {
@@ -2052,7 +2054,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 输出 Schema
+#### Output Schema
 
 ```json
 {
@@ -2073,7 +2075,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 错误码
+#### Error Codes
 
 `E_INVALID_INPUT`, `E_INTERNAL`
 
@@ -2081,13 +2083,13 @@ MCP `tools/call` 返回：
 
 ### 5.18 `job_get`
 
-**用途**：查询异步任务状态和结果。仅在客户端不支持 MCP Tasks 扩展时作为兜底使用。
+**Purpose**: Queries the status and result of an asynchronous job. Fallback used only when the client does not support the MCP Tasks extension.
 
-**后端**：JobManager  
-**长任务**：否  
-**Annotations**：`readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+**Backend**: JobManager  
+**Long-running**: no  
+**Annotations**: `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
 
-#### 输入 Schema
+#### Input Schema
 
 ```json
 {
@@ -2105,7 +2107,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 输出 Schema
+#### Output Schema
 
 ```json
 {
@@ -2121,7 +2123,7 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 错误码
+#### Error Codes
 
 `E_INVALID_INPUT`, `E_TASK_NOT_FOUND`
 
@@ -2129,13 +2131,13 @@ MCP `tools/call` 返回：
 
 ### 5.19 `job_cancel`
 
-**用途**：请求取消异步任务。取消是协作式的：服务器先发送 `SIGTERM`，宽限期后如仍运行则 `SIGKILL` 进程组。
+**Purpose**: Requests cancellation of an asynchronous job. Cancellation is cooperative: the server sends `SIGTERM` first, and `SIGKILL`s the process group if it is still running after the grace period.
 
-**后端**：JobManager  
-**长任务**：否  
-**Annotations**：`readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=false`, `openWorldHint=false`
+**Backend**: JobManager  
+**Long-running**: no  
+**Annotations**: `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=false`, `openWorldHint=false`
 
-#### 输入 Schema
+#### Input Schema
 
 ```json
 {
@@ -2151,14 +2153,14 @@ MCP `tools/call` 返回：
     "force": {
       "type": "boolean",
       "default": false,
-      "description": "跳过宽限期，直接终止进程组"
+      "description": "Skip the grace period and kill the process group immediately"
     }
   },
   "additionalProperties": false
 }
 ```
 
-#### 输出 Schema
+#### Output Schema
 
 ```json
 {
@@ -2174,74 +2176,74 @@ MCP `tools/call` 返回：
 }
 ```
 
-#### 错误码
+#### Error Codes
 
 `E_INVALID_INPUT`, `E_TASK_NOT_FOUND`, `E_JOB_NOT_RUNNING`
 
 ---
 
-## 6. 未来工具
+## 6. Future Tools
 
-以下工具不进入 MVP，但预留接口方向。
+The following tools are out of MVP scope but reserve the interface direction.
 
 ### 6.1 `artifact_delete`
 
-- **用途**：删除工作区 artifact
-- **Annotations**：`readOnlyHint=false`, `destructiveHint=true`, `idempotentHint=false`
-- **输入**：`artifact_id`、`confirm: true`
-- **行为**：默认移入回收站并设置 TTL；只有 `confirm=true` 才执行
-- **错误码**：`E_NOT_FOUND`, `E_INVALID_INPUT`, `E_QUOTA_EXCEEDED`
+- **Purpose**: delete a workspace artifact
+- **Annotations**: `readOnlyHint=false`, `destructiveHint=true`, `idempotentHint=false`
+- **Input**: `artifact_id`, `confirm: true`
+- **Behaviour**: by default moves the artifact to a trash area with a TTL; executes only when `confirm=true`
+- **Error codes**: `E_NOT_FOUND`, `E_INVALID_INPUT`, `E_QUOTA_EXCEEDED`
 
 ### 6.2 `pipeline_reduce`
 
-- **用途**：一次完成 inspect → dedisperse → RFI → standard profile → measure
-- **输入**：`archive`、`pulsar_name?`、`dm?`、`rfi_strategy?`
-- **输出**：完整 artifact 链和每一步摘要
-- **注意**：复合工具必须返回中间产物，失败时保留已完成步骤，便于重试
+- **Purpose**: inspect → dedisperse → RFI → standard profile → measure in a single call
+- **Input**: `archive`, `pulsar_name?`, `dm?`, `rfi_strategy?`
+- **Output**: the full artifact chain and a summary of each step
+- **Note**: composite tools must return intermediate artifacts and keep completed steps on failure, so retries can resume
 
 ### 6.3 `compare_timing_models`
 
-- **用途**：同一组 par/tim 分别用 PINT 和 tempo2 拟合，比较参数和残差
-- **输入**：`par`、`tim`、`fit_params?`
-- **输出**：两套拟合结果、参数差异、残差差异和 warnings
+- **Purpose**: fit the same par/tim with PINT and with tempo2, then compare parameters and residuals
+- **Input**: `par`, `tim`, `fit_params?`
+- **Output**: both fit results, parameter differences, residual differences, and warnings
 
 ### 6.4 `polarization_calibrate`
 
-- **用途**：基于 pac 的偏振校准
-- **输入**：`archive`、`calibrator_archive`、`cal_database?`
-- **输出**：校准后的 archive、校准参数和诊断图
-- **注意**：强依赖观测系统和校准源，需单独设计
+- **Purpose**: polarization calibration based on pac
+- **Input**: `archive`, `calibrator_archive`, `cal_database?`
+- **Output**: the calibrated archive, calibration parameters, and diagnostic plots
+- **Note**: strongly dependent on the observing system and the calibrator source; needs a separate design
 
 ### 6.5 `search_mode_process`
 
-- **用途**：搜索模式数据处理（PRESTO / SIGPROC / heimdall）
-- **输入**：`filterbank`、`dm_range`、`algorithm`
-- **输出**：候选列表、折叠 archive
-- **注意**：与现有 dspsr/psrchive 流程差异较大，建议独立模块
+- **Purpose**: search-mode data processing (PRESTO / SIGPROC / heimdall)
+- **Input**: `filterbank`, `dm_range`, `algorithm`
+- **Output**: a candidate list and a folded archive
+- **Note**: differs substantially from the existing dspsr/psrchive pipeline; recommend a separate module
 
 ---
 
-## 7. 版本与兼容性
+## 7. Versioning and Compatibility
 
-- 服务器版本遵循 SemVer
-- 工具名、参数名变更属于破坏性变更，需要 major 版本
-- 新增可选参数和输出字段属于 minor 版本
-- 输出 schema 使用 `result_type` 区分同步完成和异步接受；新增 `result_type` 值需要 minor 版本
-- 所有 artifact 的 `provenance.tool_version` 记录生成时的服务器版本
-- 后端版本变化不影响工具契约，但会影响科学结果；必须记录在 `provenance.backend_version`
-- 工具 schema 的 `$id` 可用于客户端缓存和兼容性检查
+- Server versions follow SemVer
+- Renaming tools or parameters is a breaking change and requires a major version
+- Adding optional parameters and output fields is a minor version
+- Output schemas use `result_type` to distinguish synchronous completion from asynchronous acceptance; a new `result_type` value requires a minor version
+- Every artifact's `provenance.tool_version` records the server version at generation time
+- Backend version changes do not affect the tool contract, but do affect scientific results; they must be recorded in `provenance.backend_version`
+- A tool schema's `$id` can be used by clients for caching and compatibility checks
 
 ---
 
-## 8. 实现检查清单
+## 8. Implementation Checklist
 
-- [ ] 所有输入 schema 设置 `additionalProperties: false`
-- [ ] 所有路径参数经过白名单和 `..` 校验
-- [ ] 所有命令使用 argv 数组，不使用 shell
-- [ ] 所有长任务支持取消和进度上报
-- [ ] 所有输出带 `provenance`
-- [ ] 所有错误使用统一 `ErrorBody`
-- [ ] 所有工具标注正确的 annotations
-- [ ] 图像结果同时提供 image content 和 artifact ID
-- [ ] 大文件不进入 MCP resource 的 base64 返回路径
-- [ ] 集成测试覆盖 inspect → dedisperse → RFI → profile → TOA → fit
+- [ ] Every input schema sets `additionalProperties: false`
+- [ ] Every path parameter passes allowlist and `..` validation
+- [ ] Every command uses an argv array, never a shell
+- [ ] Every long-running job supports cancellation and progress reporting
+- [ ] Every output carries `provenance`
+- [ ] Every error uses the unified `ErrorBody`
+- [ ] Every tool carries the correct annotations
+- [ ] Image results provide both the image content and an artifact ID
+- [ ] Large files never go through the MCP resource base64 return path
+- [ ] Integration tests cover inspect → dedisperse → RFI → profile → TOA → fit

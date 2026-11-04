@@ -110,7 +110,7 @@ class ProcessRunner:
         binary = argv[0]
         if os.sep in binary or Path(binary).is_absolute():
             if not Path(binary).exists():
-                raise env_missing(binary, "二进制不存在")
+                raise env_missing(binary, "binary not found")
         # PATH lookup happens in exec; a missing binary surfaces as FileNotFoundError below.
 
         timeout = timeout_s if timeout_s is not None else self._default_timeout
@@ -163,9 +163,9 @@ class ProcessRunner:
         if timed_out:
             raise PsrmcpError(
                 ErrorCode.TIMEOUT,
-                f"命令超时({timeout:.0f}s): {Path(binary).name}",
+                f"command timed out ({timeout:.0f}s): {Path(binary).name}",
                 retryable=True,
-                hint="改用 async 执行,或减小数据量/增加超时",
+                hint="run async instead, or reduce data volume / raise the timeout",
                 details={"argv": argv, "stderr_tail": result.stderr_tail()},
             )
         return result

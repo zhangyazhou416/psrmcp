@@ -14,7 +14,7 @@
     },
     "standard_profile": {
       "type": "string",
-      "description": "可选，标准轮廓 artifact ID"
+      "description": "Optional; artifact ID of a standard profile"
     },
     "metrics": {
       "type": "array",

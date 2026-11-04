@@ -57,7 +57,7 @@ class ArtifactStore:
     def get(self, artifact_id: str) -> ArtifactRef:
         ref = self._index.get(artifact_id)
         if ref is None:
-            raise not_found(f"未知 artifact: {artifact_id}")
+            raise not_found(f"unknown artifact: {artifact_id}")
         return ref
 
     def lookup_id(self, artifact_id: str) -> Path | None:
@@ -100,13 +100,13 @@ class ArtifactStore:
     ) -> ArtifactRef:
         src_path = Path(src_path)
         if not src_path.is_file():
-            raise not_found(f"待提交的产物不存在: {src_path}")
+            raise not_found(f"artifact to commit does not exist: {src_path}")
         size = src_path.stat().st_size
         if size > self._max_output_bytes:
             raise PsrmcpError(
                 ErrorCode.QUOTA_EXCEEDED,
-                f"产物超出大小限额: {size} > {self._max_output_bytes}",
-                hint="调整 limits.max_output_gb 或减小输出维度",
+                f"artifact exceeds the size limit: {size} > {self._max_output_bytes}",
+                hint="raise limits.max_output_gb or reduce output dimensions",
             )
 
         if cache_key:

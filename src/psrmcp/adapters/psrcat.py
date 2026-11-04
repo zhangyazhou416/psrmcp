@@ -19,8 +19,9 @@ from ..errors import invalid_input
 # raj/decj are the accepted keywords; ver/assoc(tel) do not exist. assoc is the
 # catalogue association string and is surfaced under the observatory field
 # (closest contract slot; ATNF exposes no per-row observatory).
-# `binary` 列是真正的 BINARY 模型(T2/DD/...;孤立脉冲星为 "*");
-# `bincomp` 是伴星成分描述符(如 "He[vbv+08]"),不能当模型名用。
+# `binary` is the real BINARY model (T2/DD/...; isolated pulsars get "*");
+# `bincomp` is the companion composition descriptor (e.g. "He[vbv+08]"), not a
+# model name.
 PSRCAT_COLUMNS: list[str] = "name raj decj p0 f0 p1 dm binary assoc".split()
 
 PSRCAT_FIELD: dict[str, str] = dict(
@@ -101,18 +102,19 @@ def _num(raw: str) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Ephemeris export. 完整星历直接用 `psrcat -e`(实测含 BINARY/PB/ECC/
-# CLK/EPHEM,PINT/tempo2 可直接加载);build_par_text 只服务无本地星表
-# (psrqpy 在线)或带位置 override 的合成回退路径。
+# Ephemeris export. The full ephemeris comes straight from `psrcat -e`
+# (verified to contain BINARY/PB/ECC/CLK/EPHEM; loadable by PINT/tempo2
+# as-is); build_par_text only serves the synthetic fallback path for setups
+# without a local catalogue (online psrqpy) or with a position override.
 # ---------------------------------------------------------------------------
 
-RA_HOURS_RE = re.compile(r"^(\d+):(\d+)(?::([\d.]+))?$")  # h:m[:s] —— 星表里两种都出现
+RA_HOURS_RE = re.compile(r"^(\d+):(\d+)(?::([\d.]+))?$")  # h:m[:s] — both forms occur in the catalogue
 
 
 def hms_to_deg(hms: str) -> float:
     m = RA_HOURS_RE.match(hms.strip())
     if not m:
-        raise invalid_input(f"无法解析 RA: {hms!r}")
+        raise invalid_input(f"Cannot parse RA: {hms!r}")
     h, mi = float(m.group(1)), float(m.group(2))
     sec = float(m.group(3)) if m.group(3) else 0.0
     return (h + mi / 60 + sec / 3600) * 15.0
@@ -135,7 +137,7 @@ def dms_to_deg(dms: str) -> float:
         try:
             return float(dms)
         except ValueError as exc:
-            raise invalid_input(f"无法解析 DEC: {dms!r}") from exc
+            raise invalid_input(f"Cannot parse DEC: {dms!r}") from exc
     sign = -1.0 if m.group(1).startswith("-") else 1.0
     d = abs(float(m.group(1)))
     mi = float(m.group(2))

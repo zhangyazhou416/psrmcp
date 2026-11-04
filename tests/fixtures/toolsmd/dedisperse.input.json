@@ -9,14 +9,14 @@
   "properties": {
     "input": {
       "type": "string",
-      "description": "原始数据或 archive 的 artifact ID / 相对路径"
+      "description": "Artifact ID / relative path of raw data or an archive"
     },
     "root": {
       "type": "string"
     },
     "ephemeris": {
       "type": "string",
-      "description": "artifact ID、read root 下的 .par 路径，或脉冲星名"
+      "description": "An artifact ID, a .par path under a read root, or a pulsar name"
     },
     "mode": {
       "enum": [
@@ -28,7 +28,7 @@
     "dm_override": {
       "type": "number",
       "exclusiveMinimum": 0,
-      "description": "显式覆盖 DM；会写入 provenance"
+      "description": "Explicit DM override; recorded in provenance"
     },
     "output_format": {
       "enum": [

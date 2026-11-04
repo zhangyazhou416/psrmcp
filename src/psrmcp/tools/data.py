@@ -18,8 +18,8 @@ from ._common import AppContext
 from .registry import ToolRegistry, ToolSpec
 
 _DESCRIPTION = (
-    "在配置的 read_roots 白名单目录内按 glob 查找脉冲星数据文件并初判格式。"
-    "只读、不读取文件内容(仅扩展名与文件头)。处理前用它定位数据。"
+    "Find pulsar data files by glob inside the configured read_roots whitelist and sniff their format. "
+    "Read-only; file contents are not read (extension and header only). Use it to locate data before processing."
 )
 
 
@@ -40,19 +40,19 @@ async def run(ctx: AppContext, inp: DataFindInput, progress) -> DataFindResult: 
     if inp.root:
         roots = [r for r in roots if r.name == inp.root or str(r) == inp.root]
         if not roots:
-            raise not_found(f"指定的 root 不存在: {inp.root}")
+            raise not_found(f"the specified root does not exist: {inp.root}")
     if not roots:
         raise PsrmcpError(
             ErrorCode.PATH_DENIED,
-            "未配置 data.read_roots,无目录可搜索",
-            hint="在配置文件 [data].read_roots 中添加数据目录",
+            "data.read_roots is not configured; no directories to search",
+            hint="add data directories to [data].read_roots in the config file",
         )
 
     if inp.modified_after:
         try:
             mtime_after = datetime.fromisoformat(inp.modified_after.replace("Z", "+00:00")).timestamp()
         except ValueError as exc:
-            raise PsrmcpError(ErrorCode.INVALID_INPUT, f"modified_after 无效: {exc}") from exc
+            raise PsrmcpError(ErrorCode.INVALID_INPUT, f"invalid modified_after: {exc}") from exc
     else:
         mtime_after = None
 
@@ -62,7 +62,7 @@ async def run(ctx: AppContext, inp: DataFindInput, progress) -> DataFindResult: 
 
     for root in roots:
         if not root.is_dir():
-            warnings.append(WarningInfo(code="W_ROOT_MISSING", message=f"数据根目录不存在: {root}", severity="warning"))
+            warnings.append(WarningInfo(code="W_ROOT_MISSING", message=f"data root does not exist: {root}", severity="warning"))
             continue
         for dirpath, dirnames, filenames in os.walk(root):
             depth = len(Path(dirpath).resolve().relative_to(root).parts)

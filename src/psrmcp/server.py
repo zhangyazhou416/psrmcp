@@ -102,8 +102,9 @@ def _init_config_template() -> str:
     from textwrap import dedent
 
     return dedent("""\
-        # psrmcp 配置模板(DESIGN.md 8.1)。写好各 [backends] 绝对路径后,
-        # 用 PSRMCP_CONFIG=<path> psrmcp 启动;不指定时全用默认值+PATH 探测。
+        # psrmcp configuration template (DESIGN.md 8.1). After filling in the
+        # absolute paths under [backends], start with PSRMCP_CONFIG=<path> psrmcp;
+        # when unset, everything falls back to defaults + PATH probing.
         [server]
         transport = "stdio"
         workspace = "~/.psrmcp/workspace"
@@ -116,7 +117,7 @@ def _init_config_template() -> str:
         allow_absolute_paths = false
 
         [backends]
-        # 安装脚本后按 ~/.pulsar/env.sh 与 selfcheck.json 填绝对路径。
+        # After running the install script, fill in absolute paths per ~/.pulsar/env.sh and selfcheck.json.
         dspsr = "dspsr"
         psrchive_bin = ""
         tempo2 = "tempo2"
@@ -126,7 +127,7 @@ def _init_config_template() -> str:
 
         [catalog]
         mode = "auto"            # local | online | auto
-        database = ""            # psrcat.db 绝对路径;空则用 PATH 里的 psrcat
+        database = ""            # absolute path to psrcat.db; empty uses psrcat from PATH
         cache_ttl_days = 30
 
         [limits]
@@ -138,20 +139,20 @@ def _init_config_template() -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="psrmcp", description="脉冲星数据处理 MCP Server")
-    parser.add_argument("--config", type=Path, default=None, help="TOML 配置路径(PSRMCP_CONFIG 亦可)")
+    parser = argparse.ArgumentParser(prog="psrmcp", description="Pulsar data processing MCP Server")
+    parser.add_argument("--config", type=Path, default=None, help="TOML config path (PSRMCP_CONFIG also works)")
     parser.add_argument("--init-config", type=Path, default=None, metavar="PATH",
-                        help="写出配置模板到 PATH 后退出")
+                        help="write the configuration template to PATH and exit")
     parser.add_argument("--log-level", default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     args = parser.parse_args(argv)
 
     if args.init_config is not None:
         if args.init_config.exists():
-            print(f"已存在,不覆盖: {args.init_config}", file=sys.stderr)
+            print(f"already exists, not overwriting: {args.init_config}", file=sys.stderr)
             return 1
         args.init_config.parent.mkdir(parents=True, exist_ok=True)
         args.init_config.write_text(_init_config_template(), encoding="utf-8")
-        print(f"配置模板已写出: {args.init_config}")
+        print(f"configuration template written: {args.init_config}")
         return 0
 
     logging.basicConfig(level=args.log_level, stream=sys.stderr,

@@ -110,7 +110,7 @@ class JobManager:
             )
         except asyncio.TimeoutError:
             err = PsrmcpError(
-                ErrorCode.TIMEOUT, f"任务超时({self._job_timeout:.0f}s)", retryable=True
+                ErrorCode.TIMEOUT, f"job timed out ({self._job_timeout:.0f}s)", retryable=True
             )
             self._update_error(job_id, err)
         except asyncio.CancelledError:
@@ -135,8 +135,8 @@ class JobManager:
         if row is None:
             raise PsrmcpError(
                 ErrorCode.TASK_NOT_FOUND,
-                f"任务不存在: {job_id}",
-                hint="检查 job_id,或重新提交任务",
+                f"job not found: {job_id}",
+                hint="check the job_id, or resubmit the job",
             )
         return JobRef(
             job_id=row[0],
@@ -156,8 +156,8 @@ class JobManager:
         if ref.status not in (JobStatus.QUEUED, JobStatus.WORKING):
             raise PsrmcpError(
                 ErrorCode.JOB_NOT_RUNNING,
-                f"任务已结束,状态 {ref.status.value}: {job_id}",
-                hint="用 job_get 查询最终结果",
+                f"job already finished, status {ref.status.value}: {job_id}",
+                hint="use job_get to fetch the final result",
             )
         live = self._live.get(job_id)
         if live is not None:

@@ -34,21 +34,21 @@ _CONV_EXT = {"psrfits": "fits", "psrarchive": "ar"}
 def register(reg: ToolRegistry) -> None:
     reg.add(ToolSpec(
         name="archive_inspect",
-        description="读取 PSRFITS/PSRARCHIVE 的元数据、维度和基本统计,不修改文件。处理数据前先调用。",
+        description="Read metadata, dimensions, and basic statistics from PSRFITS/PSRARCHIVE without modifying the file. Call this before processing data.",
         input_model=ArchiveInspectInput,
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
         handler=_inspect,
     ))
     reg.add(ToolSpec(
         name="archive_convert",
-        description="在 PSRFITS 与 PSRARCHIVE 之间转换格式;输入保持不变,输出为新产物。",
+        description="Convert between PSRFITS and PSRARCHIVE formats; the input is left untouched and the output is a new artifact.",
         input_model=ArchiveConvertInput,
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False),
         handler=_convert,
     ))
     reg.add(ToolSpec(
         name="archive_merge",
-        description="合并多个 archive(默认要求源名一致)。长任务,支持异步与取消。",
+        description="Merge multiple archives (requires matching source names by default). Long task; supports async and cancellation.",
         input_model=ArchiveMergeInput,
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False),
         handler=_merge,
@@ -68,8 +68,8 @@ async def _inspect(ctx: AppContext, inp: ArchiveInspectInput, progress) -> Archi
     meta = psa.parse_vap(run.stdout_text)
     if not meta:
         raise format_unsupported(
-            f"无法从 vap 输出解析元数据: {resolved.resolved.name}",
-            hint="确认文件是 psrchive 可读的 PSRFITS/PSRARCHIVE 格式",
+            f"could not parse metadata from vap output: {resolved.resolved.name}",
+            hint="confirm the file is PSRFITS/PSRARCHIVE readable by psrchive",
         )
 
     ra_deg = _ang(meta.get("ra_str"), psc.hms_to_deg_or_num)
@@ -131,8 +131,8 @@ async def _convert(ctx: AppContext, inp: ArchiveConvertInput, progress) -> Archi
     t0 = time.monotonic()
     if inp.output_format not in _CONV_EXT:
         raise format_unsupported(
-            f"psrconv 不支持输出格式 {inp.output_format}",
-            hint="当前支持 psrfits / psrarchive;sigproc/ascii 需要其它工具链",
+            f"psrconv does not support output format {inp.output_format}",
+            hint="currently psrfits / psrarchive are supported; sigproc/ascii need a different toolchain",
         )
     psr_info = await ctx.backends.require("psrchive")
     binary = _tool(ctx, "psrconv")
@@ -140,7 +140,8 @@ async def _convert(ctx: AppContext, inp: ArchiveConvertInput, progress) -> Archi
 
     job_tmp = ctx.ws.new_job_tmp(f"conv_{int(time.time() * 1000)}")
     ext = _CONV_EXT[inp.output_format]
-    # psrconv 没有输出目录旗标,产物写在输入文件旁 —— 先把输入复制进 job tmp
+    # psrconv has no output-directory flag; artifacts land next to the input
+    # file — copy the input into the job tmp first
     local_src = job_tmp / resolved.resolved.name
     shutil.copy2(resolved.resolved, local_src)
     argv = psa.psrconv_cmd(binary, str(local_src), str(job_tmp), ext)
@@ -149,13 +150,13 @@ async def _convert(ctx: AppContext, inp: ArchiveConvertInput, progress) -> Archi
         log_id = log_artifact_from_stderr(ctx, job_key="psrconv", stderr=run.stderr_tail(), argv=argv)
         raise PsrmcpError(
             ErrorCode.PROCESS_FAILED,
-            f"psrconv 失败(退出码 {run.exit_code}): {run.stderr_tail(300)}",
+            f"psrconv failed (exit code {run.exit_code}): {run.stderr_tail(300)}",
             log_artifact_id=log_id,
         )
 
     produced = sorted(job_tmp.glob(f"*.{ext}"))
     if not produced:
-        raise PsrmcpError(ErrorCode.PROCESS_FAILED, f"psrconv 未产出 .{ext} 文件")
+        raise PsrmcpError(ErrorCode.PROCESS_FAILED, f"psrconv produced no .{ext} file")
     prov = make_provenance(
         tool="archive_convert",
         backend="psrconv",
@@ -192,20 +193,21 @@ async def _merge(ctx: AppContext, inp: ArchiveMergeInput, progress) -> ArchiveMe
         if len(names) > 1:
             raise PsrmcpError(
                 ErrorCode.SOURCE_MISMATCH,
-                f"输入包含不同源: {sorted(names)}",
-                hint="确认输入属于同一脉冲星,或设置 require_same_source=false",
+                f"inputs contain different sources: {sorted(names)}",
+                hint="confirm the inputs belong to the same pulsar, or set require_same_source=false",
             )
 
     progress("merging", 0.1)
     job_tmp = ctx.ws.new_job_tmp(f"merge_{int(time.time() * 1000)}")
     out_path = Path(str(job_tmp / (inp.output_name or "merged")) + ".ar")
-    # 实测 psradd 只有 -o/-O 输出旗标,没有权重旗标:相加权重固定为 psrchive
-    # 的自然(SNR 派生)权重,time/snr 显式选项映射不到 —— 记警告
+    # In practice psradd only has -o/-O output flags and no weighting flag:
+    # the sum uses psrchive's natural (SNR-derived) weights, and the
+    # time/snr options cannot be mapped — emit a warning
     warnings = []
     if inp.weighting in ("time", "snr"):
         warnings.append(WarningInfo(
             code="W_PSRADD_NATURAL_WEIGHT",
-            message=f"psradd 无权重旗标,weighting={inp.weighting} 未生效;实际使用自然(SNR 派生)权重",
+            message=f"psradd has no weighting flag, weighting={inp.weighting} had no effect; natural (SNR-derived) weights were used",
             severity="warning",
         ))
     argv = psa.psradd_cmd(binary, [str(r.resolved) for r in resolved], str(out_path))
@@ -217,7 +219,7 @@ async def _merge(ctx: AppContext, inp: ArchiveMergeInput, progress) -> ArchiveMe
         log_id = log_artifact_from_stderr(ctx, job_key="psradd", stderr=run.stderr_tail(), argv=argv)
         raise PsrmcpError(
             ErrorCode.PROCESS_FAILED,
-            f"psradd 失败(退出码 {run.exit_code}): {run.stderr_tail(300)}",
+            f"psradd failed (exit code {run.exit_code}): {run.stderr_tail(300)}",
             log_artifact_id=log_id,
         )
     prov = make_provenance(
@@ -260,7 +262,7 @@ async def _merge(ctx: AppContext, inp: ArchiveMergeInput, progress) -> ArchiveMe
 def _tool(ctx: AppContext, name: str) -> str:
     path = ctx.backends.resolve_psrchive_tool(name)
     if path is None:
-        raise env_missing("psrchive", f"psrchive 工具 {name} 未找到")
+        raise env_missing("psrchive", f"psrchive tool {name} not found")
     return path
 
 
@@ -294,7 +296,7 @@ def _probe_integrations(ctx: AppContext, path: Path, limit: int, warnings: list[
     # the exact expression syntax gets backfilled after the toolchain exists.
     warnings.append(WarningInfo(
         code="W_INTEGRATIONS_UNAVAILABLE",
-        message="include_integrations=true 尚未实现:等待 psrstat 逐子积分输出回填",
+        message="include_integrations=true is not implemented yet: awaiting psrstat per-sub-integration output backfill",
         severity="warning",
     ))
     return None
