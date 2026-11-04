@@ -30,8 +30,9 @@ async def main() -> int:
     parser.add_argument("--config", default=None, help="PSRMCP_CONFIG value for the server")
     args = parser.parse_args()
 
-    # mcp SDK 在 env=None 时只传最小默认环境(会丢掉 PSRMCP_CONFIG),
-    # 这里显式继承当前 shell 环境,--config 只做覆盖
+    # with env=None the mcp SDK passes only a minimal default environment
+    # (dropping PSRMCP_CONFIG); inherit the current shell env explicitly,
+    # and let --config override it
     env = os.environ.copy()
     if args.config:
         env["PSRMCP_CONFIG"] = args.config

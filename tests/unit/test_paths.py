@@ -99,8 +99,9 @@ def test_artifact_lookup_used(tmp_path):
 
 
 def test_artifact_lookup_bare_path_wrapped(tmp_path):
-    # store.lookup_id 返回裸 Path;resolver 必须包成 ResolvedInput,
-    # 否则所有走 art_ id 的工具都会在 .resolved/.artifact_id 上崩。
+    # store.lookup_id returns a bare Path; the resolver must wrap it in a
+    # ResolvedInput, otherwise every tool taking an art_ id crashes on
+    # .resolved/.artifact_id.
     data = tmp_path / "data"
     data.mkdir(exist_ok=True)
     cfg = load_cfg(tmp_path, data)

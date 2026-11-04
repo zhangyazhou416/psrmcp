@@ -1,114 +1,116 @@
-# psrmcp 功能总览
+# psrmcp Feature Overview
 
-psrmcp 把脉冲星射电天文的专业处理软件栈(**dspsr / PSRCHIVE / tempo2 / psrcat / PINT**)封装成 MCP 服务器,让 AI 助手(Claude Code、Claude Desktop 等)能直接、安全地驱动它们,完成从原始观测数据到计时分析报告的完整流程。AI 不需要记忆各软件的命令行 flag,而是调用 19 个面向任务的高层工具;所有结果结构化、可溯源。
+English | [简体中文](FEATURES-zh.md)
 
-设计原则:**面向任务、参数受控、结果结构化、全程可追溯**(架构见 [DESIGN.md](DESIGN.md),逐工具 Schema 见 [TOOLS.md](TOOLS.md))。
+psrmcp wraps the professional pulsar radio-astronomy processing stack (**dspsr / PSRCHIVE / tempo2 / psrcat / PINT**) as an MCP server, so AI assistants (Claude Code, Claude Desktop, etc.) can drive them directly and safely, covering the full pipeline from raw observation data to timing analysis reports. The AI does not need to memorize each package's command-line flags; instead it calls 19 task-oriented high-level tools, and every result is structured and traceable.
 
-## 五个后端
+Design principles: **task-oriented, controlled parameters, structured results, full traceability** (architecture in [DESIGN.md](DESIGN.md), per-tool schemas in [TOOLS.md](TOOLS.md)).
 
-| 后端 | 作用 |
+## Five backends
+
+| Backend | Purpose |
 |---|---|
-| PSRCHIVE | archive 检查/加工(vap / psrstat / pam / pat / psradd / paz) |
-| dspsr | 原始数据(filterbank / PSRFITS)消色散折叠 |
-| tempo2 | 脉冲星计时(星历、相位预测) |
-| psrcat | ATNF 脉冲星星表本地查询与星历导出 |
-| PINT | Python 计时拟合与残差分析 |
+| PSRCHIVE | archive inspection/processing (vap / psrstat / pam / pat / psradd / paz) |
+| dspsr | dedispersion and folding of raw data (filterbank / PSRFITS) |
+| tempo2 | pulsar timing (ephemerides, phase prediction) |
+| psrcat | local queries of the ATNF pulsar catalogue and ephemeris export |
+| PINT | Python timing fits and residual analysis |
 
-后端缺失时服务器不崩溃:`pulsar_environment` 逐个报告 available/reason,依赖缺失后端的工具返回 `E_ENV_MISSING` 与提示。
+Missing backends do not crash the server: `pulsar_environment` reports available/reason for each one, and tools that depend on a missing backend return `E_ENV_MISSING` with a hint.
 
-## 19 个工具(按处理链路分组)
+## The 19 tools (grouped by processing pipeline)
 
-**环境与数据发现**
+**Environment and data discovery**
 
-| 工具 | 作用 |
+| Tool | Purpose |
 |---|---|
-| `pulsar_environment` | 五后端版本探测与可用性自检,报告 workspace/limits |
-| `data_find` | 在 read_roots 白名单目录中扫描识别观测数据(filterbank / PSRFITS / archive) |
+| `pulsar_environment` | version detection and availability self-check across the five backends; reports workspace/limits |
+| `data_find` | scans whitelisted read_roots directories to identify observation data (filterbank / PSRFITS / archive) |
 
-**星表与星历**
+**Catalogue and ephemerides**
 
-| 工具 | 作用 |
+| Tool | Purpose |
 |---|---|
-| `catalog_search` | 按名字/条件(p0、DM 等)/位置半径查 ATNF 星表 |
-| `catalog_get` | 取单颗脉冲星的完整参数行 |
-| `ephemeris_export` | 导出 TEMPO/TEMPO2 格式 par 星历(本地 psrcat `-e` 完整双星模型,支持字段覆盖) |
+| `catalog_search` | query the ATNF catalogue by name, by criteria (p0, DM, etc.), or by positional radius |
+| `catalog_get` | fetch the full parameter row for a single pulsar |
+| `ephemeris_export` | export a TEMPO/TEMPO2-format par ephemeris (full binary model via local psrcat `-e`, with field overrides supported) |
 
-**Archive 加工**
+**Archive processing**
 
-| 工具 | 作用 |
+| Tool | Purpose |
 |---|---|
-| `archive_inspect` | 头信息与维度(nbin/nchan/npol/nsubint/频带) |
-| `archive_convert` | PSRFITS ↔ PSRARCHIVE ↔ filterbank 格式转换 |
-| `archive_merge` | 多 archive 合并(psradd) |
+| `archive_inspect` | header info and dimensions (nbin/nchan/npol/nsubint/frequency band) |
+| `archive_convert` | PSRFITS ↔ PSRARCHIVE ↔ filterbank format conversion |
+| `archive_merge` | merge multiple archives (psradd) |
 
-**消色散**
+**Dedispersion**
 
-| 工具 | 作用 |
+| Tool | Purpose |
 |---|---|
-| `dedisperse` ⏱ | dspsr 折叠;DM 取自星历文件或 `dm_override`,星历可由 artifact ID 或脉冲星名自动解析 |
+| `dedisperse` ⏱ | dspsr folding; the DM comes from an ephemeris file or `dm_override`, and the ephemeris can be resolved automatically from an artifact ID or a pulsar name |
 
-**射频干扰(RFI)**
+**Radio-frequency interference (RFI)**
 
-| 工具 | 作用 |
+| Tool | Purpose |
 |---|---|
-| `rfi_scan` | 通道统计扫描,定位可疑通道/频段 |
-| `rfi_zap` | 按 mask(通道/频段)剔除 RFI(paz) |
+| `rfi_scan` | per-channel statistics scan to locate suspicious channels/bands |
+| `rfi_zap` | remove RFI by mask (channels/bands) (paz) |
 
-**轮廓分析**
+**Profile analysis**
 
-| 工具 | 作用 |
+| Tool | Purpose |
 |---|---|
-| `profile_standardize` | 归一化/对齐到标准轮廓,输出轮廓图 |
-| `profile_measure` | SNR、W50/W10 脉宽、峰值流量等测量,附 matplotlib 轮廓图 |
+| `profile_standardize` | normalize/align to a standard profile and output a profile plot |
+| `profile_measure` | measurements such as SNR, W50/W10 pulse widths, and peak flux, with a matplotlib profile plot |
 
-**计时**
+**Timing**
 
-| 工具 | 作用 |
+| Tool | Purpose |
 |---|---|
-| `toa_extract` ⏱ | pat 批量提取 TOA(自动生成标准轮廓),输出 .tim 与 .par 产物 |
-| `timing_fit` ⏱ | PINT 加权拟合(1/σ² 或 uniform),输出参数表、reduced χ²、WRMS、残差图与拟合后 par |
-| `timing_diagnose` | 残差诊断:离群 TOA(基于 MAD)、reduced χ² 高/低、JUMP 参数存在性、DM 信息、分布偏度/峰度,并给出处理建议 |
+| `toa_extract` ⏱ | batch TOA extraction with pat (standard profiles generated automatically); outputs .tim and .par artifacts |
+| `timing_fit` ⏱ | PINT weighted fit (1/σ² or uniform); outputs a parameter table, reduced χ², WRMS, a residual plot, and the post-fit par |
+| `timing_diagnose` | residual diagnostics: outlier TOAs (MAD-based), high/low reduced χ², presence of JUMP parameters, DM information, distribution skewness/kurtosis, plus processing recommendations |
 
-**产物与任务管理**
+**Artifacts and job management**
 
-| 工具 | 作用 |
+| Tool | Purpose |
 |---|---|
-| `artifact_list` | 列出 workspace 产物(支持按 kind 过滤) |
-| `job_get` | 查询异步任务状态/结果 |
-| `job_cancel` | 取消运行中的任务(进程组级) |
+| `artifact_list` | list workspace artifacts (filterable by kind) |
+| `job_get` | query the status/result of an async job |
+| `job_cancel` | cancel a running job (at the process-group level) |
 
-⏱ = 长任务:超过阈值自动转异步(返回 `job_id` 轮询),支持取消,状态 SQLite 持久化,服务器重启后 working → interrupted。
+⏱ = long-running job: automatically switches to async above a threshold (returns a `job_id` to poll), supports cancellation, state persisted in SQLite; after a server restart, working becomes interrupted.
 
-## 工程特性
+## Engineering features
 
-- **产物溯源**:每个结果都是 `art_xxx` 产物,记录 sha256、完整 provenance(命令 argv、参数、后端版本、父子谱系),工具间用 artifact ID 串流水线。
-- **安全沙盒**:路径白名单(拒 `..`/控制字符/symlink 逃逸)、命令只走 argv 数组不进 shell、rlimits、超时先 SIGTERM 后 SIGKILL 进程组、stderr 尾部落 log 产物。
-- **结构化输出**:每个工具返回 Markdown 摘要(content)+ 结构化 JSON(structuredContent);错误统一信封 `code/message/hint/retryable/log_artifact_id`,不暴露裸 traceback。
-- **绘图**:所有图走 Python matplotlib,以 PNG plot artifact 交付(轮廓、残差等),无 PGPLOT 依赖。
-- **资源与提示**:`pulsar://environment`(与工具一致的运行环境快照)、`pulsar://docs/reduction`(标准处理流程);5 个预设 prompt:观测流程、计时分析、RFI 诊断、星表转星历、计时模型对比。
-- **配置**:`--init-config` 生成 TOML 模板(五段:server/data/backends/catalog/limits),环境变量 `PSRMCP_CONFIG` 指定路径;stdio 冷启动无 shell 环境也可用绝对路径直接配置后端。
+- **Artifact provenance**: every result is an `art_xxx` artifact recording sha256 and full provenance (command argv, parameters, backend versions, parent/child lineage); tools chain pipelines together via artifact IDs.
+- **Security sandbox**: path whitelist (rejects `..`/control characters/symlink escapes), commands passed only as argv arrays and never through a shell, rlimits, timeouts that SIGTERM then SIGKILL the process group, stderr tails written to log artifacts.
+- **Structured output**: every tool returns a Markdown summary (content) plus structured JSON (structuredContent); errors use a uniform `code/message/hint/retryable/log_artifact_id` envelope, with no raw traceback exposed.
+- **Plotting**: all plots use Python matplotlib and are delivered as PNG plot artifacts (profiles, residuals, etc.), with no PGPLOT dependency.
+- **Resources and prompts**: `pulsar://environment` (a runtime environment snapshot consistent with the tools), `pulsar://docs/reduction` (the standard reduction workflow); 5 preset prompts: observation workflow, timing analysis, RFI diagnostics, catalogue-to-ephemeris conversion, timing model comparison.
+- **Configuration**: `--init-config` generates a TOML template (five sections: server/data/backends/catalog/limits); the `PSRMCP_CONFIG` environment variable sets its path; on a stdio cold start without a shell environment, backends can still be configured directly via absolute paths.
 
-## 一次完整处理链
+## A complete processing chain
 
-对 AI 说"处理这批观测数据",它可以自主完成:
+Tell the AI "process this batch of observation data" and it can do the following on its own:
 
 ```
-pulsar_environment   确认后端可用
-data_find            找到 ws/synth.fil
-ephemeris_export     查 psrcat 取 J0437-4715 的完整 par 星历
-dedisperse           dspsr 消色散折叠(-E 星历生成相位预测器)
-rfi_zap              剔除干扰通道
-profile_standardize  建立标准轮廓(SNR 133.9)
-toa_extract          提取 128 个 TOA
-timing_fit           PINT 拟合,得 reduced χ² 与残差图
-timing_diagnose      诊断:离群 TOA、是否需要 DMX/JUMP
+pulsar_environment   confirm the backends are available
+data_find            find ws/synth.fil
+ephemeris_export     query psrcat for the full par ephemeris of J0437-4715
+dedisperse           dspsr dedispersion and folding (-E ephemeris builds the phase predictor)
+rfi_zap              remove the contaminated channels
+profile_standardize  build the standard profile (SNR 133.9)
+toa_extract          extract 128 TOAs
+timing_fit           PINT fit, yielding reduced χ² and a residual plot
+timing_diagnose      diagnose: outlier TOAs, whether DMX/JUMP are needed
 ```
 
-每一步的产物(archive、.tim/.par、图、日志)都带 provenance,可回溯、可复现。
+The artifacts of every step (archives, .tim/.par, plots, logs) carry provenance — traceable and reproducible.
 
-## 相关文档
+## Related documentation
 
-- [TUTORIAL.md](TUTORIAL.md) — 使用教程(从安装到完整处理链实战)
-- [DESIGN.md](DESIGN.md) — 架构与执行模型
-- [TOOLS.md](TOOLS.md) — 19 个工具的完整 JSON Schema 契约
-- [INSTALL.md](INSTALL.md) — 软件栈一键安装
+- [TUTORIAL.md](TUTORIAL.md) — usage tutorial (from installation to a full processing-chain walkthrough)
+- [DESIGN.md](DESIGN.md) — architecture and execution model
+- [TOOLS.md](TOOLS.md) — complete JSON Schema contracts for all 19 tools
+- [INSTALL.md](INSTALL.md) — one-click installation of the software stack

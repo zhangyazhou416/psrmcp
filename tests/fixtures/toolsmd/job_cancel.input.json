@@ -13,7 +13,7 @@
     "force": {
       "type": "boolean",
       "default": false,
-      "description": "跳过宽限期，直接终止进程组"
+      "description": "Skip the grace period and kill the process group immediately"
     }
   },
   "additionalProperties": false

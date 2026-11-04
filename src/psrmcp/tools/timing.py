@@ -37,7 +37,7 @@ _TOA_SPLIT = re.compile(r"\s+")
 def register(reg: ToolRegistry) -> None:
     reg.add(ToolSpec(
         name="toa_extract",
-        description="用标准轮廓从 archive 提取 TOA(pat),生成 TEMPO 格式 .tim 产物。长任务。",
+        description="Extract TOAs from an archive against a standard profile (pat), producing a TEMPO-format .tim artifact. Long task.",
         input_model=ToaExtractInput,
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False),
         handler=_toa,
@@ -45,7 +45,7 @@ def register(reg: ToolRegistry) -> None:
     ))
     reg.add(ToolSpec(
         name="timing_fit",
-        description="PINT/tempo2 计时拟合:par+tim -> 新 par、拟合统计、残差与残差图。长任务。",
+        description="PINT/tempo2 timing fit: par+tim -> new par, fit statistics, residuals, and residual plot. Long task.",
         input_model=TimingFitInput,
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False),
         handler=_fit,
@@ -53,7 +53,7 @@ def register(reg: ToolRegistry) -> None:
     ))
     reg.add(ToolSpec(
         name="timing_diagnose",
-        description="对 par+tim 做残差与模型诊断(离群点/DM/JUMP/分布),不重新拟合。只读。",
+        description="Residual and model diagnostics on par+tim (outliers/DM/JUMP/distribution) without re-fitting. Read-only.",
         input_model=TimingDiagnoseInput,
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
         handler=_diagnose,
@@ -68,7 +68,7 @@ def _resolve_par_tim(ctx: AppContext, par: str, tim: str, root: str | None) -> t
         if ref.startswith("art_"):
             p = ctx.store.lookup_id(ref)
             if p is None:
-                raise PsrmcpError(ErrorCode.NOT_FOUND, f"未知 artifact: {ref}")
+                raise PsrmcpError(ErrorCode.NOT_FOUND, f"unknown artifact: {ref}")
             ids.append(ref)
             return p
         return ctx.resolver.resolve(ref, root=root, what="par/tim").resolved
@@ -149,8 +149,8 @@ async def _toa(ctx: AppContext, inp: ToaExtractInput, progress) -> ToaExtractRes
         log_id = log_artifact_from_stderr(ctx, job_key="pat", stderr=run.stderr_tail(), argv=argv)
         raise PsrmcpError(
             ErrorCode.PROCESS_FAILED,
-            f"pat 失败(退出码 {run.exit_code}): {run.stderr_tail(300)}",
-            hint="确认 archive 与标准轮廓格式一致(TOOL contract 测试回填旗标)",
+            f"pat failed (exit code {run.exit_code}): {run.stderr_tail(300)}",
+            hint="confirm the archive and standard profile formats match (flags to be backfilled by TOOL contract tests)",
             log_artifact_id=log_id,
         )
 
@@ -194,7 +194,7 @@ async def _toa(ctx: AppContext, inp: ToaExtractInput, progress) -> ToaExtractRes
 def _stats_from_payload(payload: dict, warnings: list) -> FitStats:  # noqa: ANN001
     chi2 = payload.get("chi2")
     if chi2 is None:
-        warnings.append(WarningInfo(code="W_FIT_CHI2_UNAVAILABLE", message="worker 未返回有限 chi2,记 0"))
+        warnings.append(WarningInfo(code="W_FIT_CHI2_UNAVAILABLE", message="worker returned no finite chi2; recorded as 0"))
         chi2 = 0.0
     dof = int(payload.get("dof") or 0)
     red = payload.get("reduced_chi2")
@@ -233,7 +233,7 @@ async def _fit_pint(ctx: AppContext, inp: TimingFitInput, par_p: Path, tim_p: Pa
     for w in resp.get("warnings", []):
         warnings.append(_winfo("W_FIT_WARNING", w))
     if inp.weighting == "uniform":
-        warnings.append(_winfo("W_UNIFORM_WEIGHTING", "uniform 权重:所有 TOA 误差设为中位数,统计意义不同于 1/sigma^2"))
+        warnings.append(_winfo("W_UNIFORM_WEIGHTING", "uniform weighting: all TOA errors set to the median; statistically different from 1/sigma^2"))
     return resp, out_par, ["pint-worker", "op=fit"]
 
 
@@ -250,19 +250,19 @@ async def _fit_tempo2(ctx: AppContext, inp: TimingFitInput, par_p: Path, tim_p: 
         log_id = log_artifact_from_stderr(ctx, job_key="tempo2", stderr=run.stderr_tail(), argv=argv)
         raise PsrmcpError(
             ErrorCode.PROCESS_FAILED,
-            f"tempo2 失败(退出码 {run.exit_code}): {run.stderr_tail(300)}",
+            f"tempo2 failed (exit code {run.exit_code}): {run.stderr_tail(300)}",
             log_artifact_id=log_id,
         )
     stats = t2a.parse_tempo2_output(run.stdout_text)
     warnings.append(_winfo(
         "W_TEMPO2_CONTRACT",
-        "tempo2 旗标/输出解析为 TODO(contract),统计字段为最佳猜测;推荐 backend=pint 获得完整结果",
+        "tempo2 flag/output parsing is TODO(contract); statistic fields are best-guess. backend=pint is recommended for full results",
     ))
     postfit = job_tmp / "tempo2.par"  # TODO(contract): tempo2 writes tempo2.par in cwd
     if not postfit.is_file():
         postfit = job_tmp / "postfit.par"
         postfit.write_text(par_p.read_text(encoding="utf-8"), encoding="utf-8")
-        warnings.append(_winfo("W_PAR_UNCHANGED", "tempo2 未产出 postfit par,返回输入 par 原样"))
+        warnings.append(_winfo("W_PAR_UNCHANGED", "tempo2 produced no postfit par; returning the input par unchanged"))
     return stats, postfit, argv
 
 
@@ -345,7 +345,7 @@ async def _fit(ctx: AppContext, inp: TimingFitInput, progress) -> TimingFitResul
                     parents=[par_ref.artifact_id],
                 ).artifact_id)
             except Exception as exc:  # plotting is best-effort, never fatal
-                warnings.append(_winfo("W_PLOT_FAILED", f"残差图生成失败: {exc}"))
+                warnings.append(_winfo("W_PLOT_FAILED", f"residual plot generation failed: {exc}"))
     elif inp.backend == "tempo2":
         resid_files = sorted(job_tmp.glob("resid2*"))  # TODO(contract): -resid 2 naming
         if resid_files:
@@ -358,7 +358,7 @@ async def _fit(ctx: AppContext, inp: TimingFitInput, progress) -> TimingFitResul
                 parents=[par_ref.artifact_id],
             ).artifact_id
         else:
-            warnings.append(_winfo("W_RESIDUALS_UNAVAILABLE", "tempo2 未产出 resid2 文件"))
+            warnings.append(_winfo("W_RESIDUALS_UNAVAILABLE", "tempo2 produced no resid2 file"))
 
     progress("complete", 1.0)
     return TimingFitResult(
@@ -433,7 +433,7 @@ async def _diagnose(ctx: AppContext, inp: TimingDiagnoseInput, progress) -> Timi
                 parents=_parent_ids,
             ).artifact_id)
         except Exception as exc:  # plotting is best-effort, never fatal
-            warnings.append(_winfo("W_PLOT_FAILED", f"诊断图生成失败: {exc}"))
+            warnings.append(_winfo("W_PLOT_FAILED", f"diagnostic plot generation failed: {exc}"))
 
     progress("complete", 1.0)
     return TimingDiagnoseResult(

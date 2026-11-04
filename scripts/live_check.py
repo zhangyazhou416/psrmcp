@@ -1,19 +1,19 @@
 #!/usr/bin/env python
-"""真实栈端到端验证(在安装好脉冲星软件栈的机器上运行)。
+"""End-to-end check against the real stack (run on a machine with the pulsar stack installed).
 
-依次调度 9 条真实工具链路:pulsar_environment → archive_inspect →
+Dispatches 9 real tool calls in sequence: pulsar_environment → archive_inspect →
 profile_standardize → toa_extract → rfi_zap → catalog_search →
-ephemeris_export → timing_fit → dedisperse,长任务自动等 job 完成。
+ephemeris_export → timing_fit → dedisperse; long-running calls wait for their job to finish.
 
-前置:
-  1. 已运行 scripts/install_pulsar_stack.sh,且 shell 已 source <prefix>/env.sh
-     (或 config.toml 的 [backends] 写了绝对路径)
-  2. PSRMCP_CONFIG 指向带真实栈的配置(config.toml 是现成模板)
-  3. config.toml [data].read_roots 含 psrchive 的 docs/_static(PSR.ar 样本)
-     与本仓库 ws/(synth.fil 所在);synth.fil 用 scripts/make_synth_fil.py 生成
+Prerequisites:
+  1. scripts/install_pulsar_stack.sh has been run and the shell has sourced
+     <prefix>/env.sh (or config.toml [backends] holds absolute paths)
+  2. PSRMCP_CONFIG points at a config with the real stack (config.toml is a ready template)
+  3. config.toml [data].read_roots includes psrchive's docs/_static (the PSR.ar sample)
+     and this repo's ws/ (where synth.fil lives); generate synth.fil with scripts/make_synth_fil.py
 
-用法:uv run python scripts/live_check.py
-退出码:0 = 全绿;1 = 有失败步骤。
+Usage: uv run python scripts/live_check.py
+Exit code: 0 = all green; 1 = at least one step failed.
 """
 
 from __future__ import annotations
@@ -94,7 +94,7 @@ async def main() -> int:
 
     print(f"\nLIVE CHECK: ok={ok} fail={fail}", flush=True)
     sys.stdout.flush()
-    os._exit(1 if fail else 0)  # 不等后台 job 任务,避免 asyncio.run 收尾挂起
+    os._exit(1 if fail else 0)  # don't wait for background jobs; avoids asyncio.run teardown hanging
 
 
 if __name__ == "__main__":

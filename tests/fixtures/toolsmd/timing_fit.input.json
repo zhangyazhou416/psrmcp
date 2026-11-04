@@ -9,11 +9,11 @@
   "properties": {
     "par": {
       "type": "string",
-      "description": "artifact ID 或 read root 下的 .par 相对路径"
+      "description": "Artifact ID or .par relative path under a read root"
     },
     "tim": {
       "type": "string",
-      "description": "artifact ID 或 read root 下的 .tim 相对路径"
+      "description": "Artifact ID or .tim relative path under a read root"
     },
     "root": {
       "type": "string"
@@ -32,7 +32,7 @@
         "pattern": "^[A-Za-z0-9_]+$"
       },
       "maxItems": 50,
-      "description": "缺省使用 par 文件中的 fit flags；显式提供时必须能在 par 中解析"
+      "description": "Defaults to the fit flags in the par file; when given explicitly, every entry must resolve in the par"
     },
     "weighting": {
       "enum": [

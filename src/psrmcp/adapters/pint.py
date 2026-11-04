@@ -39,13 +39,13 @@ async def call_worker(
 def parse_worker_output(text: str) -> dict[str, Any]:
     lines = [ln for ln in text.strip().splitlines() if ln.strip()]
     if not lines:
-        raise PsrmcpError(ErrorCode.PROCESS_FAILED, "PINT worker 没有输出")
+        raise PsrmcpError(ErrorCode.PROCESS_FAILED, "PINT worker produced no output")
     try:
         resp = json.loads(lines[-1])
     except json.JSONDecodeError as exc:
         raise PsrmcpError(
             ErrorCode.PROCESS_FAILED,
-            f"PINT worker 输出不是 JSON: {exc}",
+            f"PINT worker output is not JSON: {exc}",
             details={"stdout_tail": text[-2000:]},
         ) from exc
     if not resp.get("ok", False):

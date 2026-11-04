@@ -13,7 +13,7 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class TasksCapability:
     supported: bool = False
-    reason: str = "当前 MCP SDK 未实现 Tasks 扩展,使用 job_get/job_cancel 兜底"
+    reason: str = "Tasks extension not implemented in the current MCP SDK; falling back to job_get/job_cancel"
 
     def describe(self) -> str:
-        return self.reason if not self.supported else "MCP Tasks 扩展可用"
+        return self.reason if not self.supported else "MCP Tasks extension available"

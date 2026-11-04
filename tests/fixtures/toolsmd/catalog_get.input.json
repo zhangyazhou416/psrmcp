@@ -10,7 +10,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 64,
-      "description": "例如 'J0437-4715' 或 'B1937+21'"
+      "description": "For example 'J0437-4715' or 'B1937+21'"
     }
   },
   "additionalProperties": false

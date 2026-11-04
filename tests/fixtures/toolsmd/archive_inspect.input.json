@@ -8,11 +8,11 @@
   "properties": {
     "archive": {
       "type": "string",
-      "description": "artifact ID 或 read root 下的相对路径"
+      "description": "Artifact ID or relative path under a read root"
     },
     "root": {
       "type": "string",
-      "description": "当 archive 是相对路径时指定 data root"
+      "description": "Specifies the data root when archive is a relative path"
     },
     "include_stats": {
       "type": "boolean",

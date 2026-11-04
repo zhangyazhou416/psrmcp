@@ -19,8 +19,9 @@ def register(reg: ToolRegistry) -> None:
         ToolSpec(
             name="pulsar_environment",
         description=(
-            "返回服务器版本、可用后端(dspsr/psrchive/tempo2/psrcat/pint)、数据根目录、工作区与资源限额。"
-            "建议每次会话第一个调用。后端不可用时不报错,而是在 backends 里给出 reason。"
+            "Returns the server version, available backends (dspsr/psrchive/tempo2/psrcat/pint), "
+            "data roots, workspace, and resource limits. Recommended as the first call of each session. "
+            "Unavailable backends do not raise; they report a reason in backends."
         ),
             input_model=PulsarEnvironmentInput,
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
@@ -39,7 +40,7 @@ async def run(ctx: AppContext, inp: PulsarEnvironmentInput, progress) -> Environ
             warnings.append(
                 WarningInfo(
                     code="W_BACKEND_MISSING",
-                    message=f"后端 {name} 不可用: {info.reason or '未找到'}",
+                    message=f"backend {name} unavailable: {info.reason or 'not found'}",
                     severity="info",
                     details={"backend": name},
                 )

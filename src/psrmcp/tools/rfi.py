@@ -20,14 +20,14 @@ from .archive import _tool as _psrchive_tool
 def register(reg: ToolRegistry) -> None:
     reg.add(ToolSpec(
         name="rfi_scan",
-        description="分析 archive 的通道统计,给出建议坏通道掩膜。只读,不修改数据。",
+        description="Analyse per-channel statistics of an archive and suggest a bad-channel mask. Read-only; never modifies data.",
         input_model=RfiScanInput,
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
         handler=_scan,
     ))
     reg.add(ToolSpec(
         name="rfi_zap",
-        description="对 archive 应用通道掩膜生成新 archive;支持显式通道列表或自动检测。",
+        description="Apply a channel mask to an archive to produce a new one; supports an explicit channel list or automatic detection.",
         input_model=RfiZapInput,
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False),
         handler=_zap,
@@ -60,8 +60,8 @@ def _flag_stats(ctx: AppContext, path, threshold_sigma: float, nchan_hint: int) 
     """
     raise PsrmcpError(
         ErrorCode.PROCESS_FAILED,
-        "rfi_scan 的逐通道统计依赖 psrstat 逐通道输出,契约测试回填前不可用",
-        hint="先安装软件栈并运行契约测试,或使用 rfi_zap 显式通道列表",
+        "rfi_scan per-channel statistics rely on psrstat per-channel output, unavailable until contract tests are backfilled",
+        hint="install the software stack and run the contract tests first, or use rfi_zap with an explicit channel list",
         retryable=False,
     )
 
@@ -73,14 +73,14 @@ async def _scan(ctx: AppContext, inp: RfiScanInput, progress) -> RfiScanResult: 
     resolved = ctx.resolver.resolve(inp.archive, root=inp.root, what="archive")
 
     if inp.method == "spectral_kurtosis":
-        raise env_missing("clfd", "spectral_kurtosis 方法依赖 clfd,当前未安装")
+        raise env_missing("clfd", "the spectral_kurtosis method depends on clfd, which is not installed")
 
     vap_binary = _psrchive_tool(ctx, "vap")
     vap = await ctx.runner.run(psa.vap_cmd(vap_binary, str(resolved.resolved)), timeout_s=120.0)
     meta = psa.parse_vap(vap.stdout_text)
     nchan = int(meta.get("nchan") or 0)
     if nchan <= 0:
-        raise format_unsupported(f"无法确定通道数: {resolved.resolved.name}")
+        raise format_unsupported(f"cannot determine the channel count: {resolved.resolved.name}")
 
     progress("measuring", 0.3)
     bad, stats = _flag_stats(ctx, resolved.resolved, inp.threshold_sigma, nchan)
@@ -129,7 +129,7 @@ async def _zap(ctx: AppContext, inp: RfiZapInput, progress) -> RfiZapResult:  # 
         channels = list(inp.mask.channels or [])
 
     if not channels:
-        raise PsrmcpError(ErrorCode.INVALID_INPUT, "掩膜为空:没有要 zap 的通道")
+        raise PsrmcpError(ErrorCode.INVALID_INPUT, "empty mask: no channels to zap")
 
     nchan_total = 0
     vap_binary = _psrchive_tool(ctx, "vap")
@@ -138,7 +138,8 @@ async def _zap(ctx: AppContext, inp: RfiZapInput, progress) -> RfiZapResult:  # 
     nchan_total = int(meta.get("nchan") or 0)
 
     job_tmp = ctx.ws.new_job_tmp(f"paz_{int(time.time() * 1000)}")
-    # paz 把 <输入名>.paz 写到输入文件旁(不是进程 cwd)—— 先复制进 job tmp
+    # paz writes <input name>.paz next to the input file (not the process
+    # cwd) — copy the input into the job tmp first
     import shutil
 
     local_src = job_tmp / resolved.resolved.name
@@ -151,7 +152,7 @@ async def _zap(ctx: AppContext, inp: RfiZapInput, progress) -> RfiZapResult:  # 
         log_id = log_artifact_from_stderr(ctx, job_key="paz", stderr=run.stderr_tail(), argv=argv)
         raise PsrmcpError(
             ErrorCode.PROCESS_FAILED,
-            f"paz 失败(退出码 {run.exit_code}): {run.stderr_tail(300)}",
+            f"paz failed (exit code {run.exit_code}): {run.stderr_tail(300)}",
             log_artifact_id=log_id,
         )
     prov = make_provenance(
@@ -205,7 +206,7 @@ def _plot_mask(ctx: AppContext, bad: list[int], nchan: int, name: str, warnings:
     except Exception as exc:
         warnings.append(WarningInfo(
             code="W_PLOT_FAILED",
-            message=f"掩膜图生成失败: {exc}",
+            message=f"mask plot generation failed: {exc}",
             severity="info",
         ))
         return None

@@ -18,81 +18,81 @@ class PromptDef:
 
 _DEFS: dict[str, PromptDef] = {
     "reduce_observation": PromptDef(
-        description="引导完成“检查 → 消色散 → RFI → 标准轮廓 → 测量”的单次观测约简",
+        description="Guide through a single-observation reduction: inspect -> dedisperse -> RFI -> standard profile -> measure",
         arguments=(
-            ("archive", "输入 archive 的路径或 artifact ID", True),
-            ("pulsar_name", "脉冲星名字(J 名称),用于取星表参数", False),
-            ("dm", "已知色散量 pc cm^-3;缺省则从数据头/星表推断", False),
-            ("rfi_policy", "RFI 策略:conservative|aggressive|skip,默认 conservative", False),
+            ("archive", "Path or artifact ID of the input archive", True),
+            ("pulsar_name", "Pulsar name (J name), used to fetch catalog parameters", False),
+            ("dm", "Known dispersion measure in pc cm^-3; inferred from data header/catalog if omitted", False),
+            ("rfi_policy", "RFI policy: conservative|aggressive|skip, default conservative", False),
         ),
         template=(
-            "请帮我对观测数据 {archive} 完成一次完整的脉冲星约简。\n"
+            "Please perform a full pulsar reduction on the observation {archive}.\n"
             "{pulsar_name_line}{dm_line}"
-            "RFI 策略: {rfi_policy}。\n\n"
-            "要求:\n"
-            "1. 先用环境与数据发现工具确认后端可用性,再检查数据元信息。\n"
-            "2. 消色散前确认 DM 来源(数据头 / 星表 / 用户提供),不确定时先询问。\n"
-            "3. RFI 处理先扫描、后清理;conservative 策略下宁可少 zap 并记录 mask。\n"
-            "4. 生成标准轮廓并测量 SNR/宽度;所有产物引用 artifact ID。\n"
-            "5. 长任务用 execution_mode=auto 并用 job_get 轮询;失败时先读 log artifact。\n"
-            "6. 每一步汇报结构化结果的关键数字,不要凭空补全未测量的值。"
+            "RFI policy: {rfi_policy}.\n\n"
+            "Requirements:\n"
+            "1. First confirm backend availability with the environment and data discovery tools, then inspect the data metadata.\n"
+            "2. Before dedispersing, confirm the DM source (data header / catalog / user-supplied); ask when unsure.\n"
+            "3. For RFI, scan first then clean; under the conservative policy prefer zapping fewer channels and record the mask.\n"
+            "4. Generate the standard profile and measure S/N and width; reference all products by artifact ID.\n"
+            "5. For long tasks use execution_mode=auto and poll with job_get; on failure read the log artifact first.\n"
+            "6. Report the key numbers from structured results at each step; never invent unmeasured values."
         ),
     ),
     "timing_analysis": PromptDef(
-        description="引导完成 par+tim 的计时拟合、残差检查与参数解读",
+        description="Guide through par+tim timing fits, residual checks, and parameter interpretation",
         arguments=(
-            ("par", "初始 .par 文件路径或 artifact ID", True),
-            ("tim", "TOA .tim 文件路径或 artifact ID", True),
-            ("backend", "拟合后端:pint(默认)或 tempo2", False),
+            ("par", "Path or artifact ID of the initial .par file", True),
+            ("tim", "Path or artifact ID of the TOA .tim file", True),
+            ("backend", "Fit backend: pint (default) or tempo2", False),
         ),
         template=(
-            "请对 par={par}、tim={tim} 做计时分析(backend: {backend})。\n\n"
-            "要求:\n"
-            "1. 先拟合,报告 n_toas、chi2/dof、RMS/WRMS 与被拟合参数及不确定度。\n"
-            "2. 再做诊断:离群点、JUMP、DM 信息、残差分布;关注 reduced chi2 异常。\n"
-            "3. 按 diagnostics 的 recommendations 清理数据后重拟合,对比前后 RMS。\n"
-            "4. 解读参数时给出物理论述(自转/自行/双星),标注哪些参数未被拟合固定。\n"
-            "5. 所有中间产物(par/residuals/plot)用 artifact ID 引用。"
+            "Please run a timing analysis on par={par} and tim={tim} (backend: {backend}).\n\n"
+            "Requirements:\n"
+            "1. Fit first; report n_toas, chi2/dof, RMS/WRMS, and the fitted parameters with uncertainties.\n"
+            "2. Then diagnose: outliers, JUMPs, DM information, residual distribution; watch for anomalous reduced chi2.\n"
+            "3. Clean the data following the diagnostics recommendations and refit, comparing RMS before and after.\n"
+            "4. When interpreting parameters, give physical reasoning (spin/proper motion/binary) and note which parameters are held fixed without fitting.\n"
+            "5. Reference all intermediate products (par/residuals/plot) by artifact ID."
         ),
     ),
     "diagnose_rfi": PromptDef(
-        description="引导分析坏通道并选择 zap 策略",
-        arguments=(("archive", "待分析 archive 的路径或 artifact ID", True),),
+        description="Guide through bad-channel analysis and zap strategy selection",
+        arguments=(("archive", "Path or artifact ID of the archive to analyze", True),),
         template=(
-            "请分析 {archive} 的射频干扰情况。\n\n"
-            "要求:\n"
-            "1. 先做 RFI 扫描,给出坏通道比例与建议 mask(附图)。\n"
-            "2. 结合天文合理性讨论:宽带突发、持续窄带、脉冲相位内/外的差异。\n"
-            "3. 给出 zap 建议(哪些通道、为什么),先小范围试 zap 验证影响。\n"
-            "4. 清理后重新评估轮廓质量(SNR 变化),并诚实报告统计受限之处。"
+            "Please analyze the radio-frequency interference in {archive}.\n\n"
+            "Requirements:\n"
+            "1. Run an RFI scan first; report the bad-channel fraction and a suggested mask (with plot).\n"
+            "2. Discuss astronomical plausibility: broadband bursts, persistent narrowband signals, on-pulse vs off-pulse differences.\n"
+            "3. Give zap recommendations (which channels and why); trial-zap a small range first to verify the impact.\n"
+            "4. After cleaning, re-assess profile quality (S/N change) and honestly report where the statistics are limiting."
         ),
     ),
     "catalog_to_ephemeris": PromptDef(
-        description="从星表获取参数并导出 .par 文件",
+        description="Fetch parameters from the catalog and export a .par file",
         arguments=(
-            ("name", "脉冲星名字", True),
-            ("format", "par 格式:tempo1(默认)或 tempo2", False),
+            ("name", "Pulsar name", True),
+            ("format", "par format: tempo1 (default) or tempo2", False),
         ),
         template=(
-            "请为脉冲星 {name} 导出 {format} 格式的星历文件。\n\n"
-            "要求:\n"
-            "1. 从星表查询参数,报告 RA/Dec/DM/周期等关键值。\n"
-            "2. 导出 .par 并检查包含的参数;双星参数缺失时给出 W_BINARY_PARAMS_INCOMPLETE 警告的处理建议。\n"
-            "3. 说明该 par 适用于哪类后续处理(消色散/计时),以及局限(无自行/无 proper motion 等)。"
+            "Please export a {format} ephemeris file for pulsar {name}.\n\n"
+            "Requirements:\n"
+            "1. Query the catalog for parameters and report key values (RA/Dec/DM/period).\n"
+            "2. Export the .par and check the parameters it contains; if binary parameters are missing, advise on handling the W_BINARY_PARAMS_INCOMPLETE warning.\n"
+            "3. State which downstream processing the par suits (dedispersion/timing) and its limitations (no proper motion, etc.)."
         ),
     ),
     "compare_timing_models": PromptDef(
-        description="对同一 par+tim 分别用 PINT 与 tempo2 拟合并对比结果(后期)",
+        description="Fit the same par+tim with PINT and tempo2 separately and compare the results (later phase)",
         arguments=(
-            ("par", "计时模型 .par", True),
+            ("par", "Timing model .par", True),
             ("tim", "TOA .tim", True),
         ),
         template=(
-            "请用 PINT 与 tempo2 分别对 par={par}、tim={tim} 拟合,并对比结果。\n\n"
-            "要求:\n"
-            "1. 两个后端各产出拟合统计与残差;注意 tempo2 输出解析尚属 TODO(contract),异常时如实报告。\n"
-            "2. 对比表:RMS/WRMS、reduced chi2、关键参数值与不确定度差异。\n"
-            "3. 讨论差异来源(时间历表、太阳系星历、权重处理),并给出推荐后端与理由。"
+            "Please fit par={par} and tim={tim} with both PINT and tempo2, and compare the results.\n\n"
+            "Requirements:\n"
+            "1. Produce fit statistics and residuals from each backend; tempo2 output parsing is still a TODO (contract) — report failures as they are.\n"
+            "2. Comparison table: RMS/WRMS, reduced chi2, key parameter values and uncertainty differences.\n"
+            "3. Discuss the sources of differences (time ephemerides, solar-system ephemeris, weighting) and recommend a backend with reasons."
         ),
     ),
 }
@@ -115,24 +115,24 @@ def list_prompts() -> list[Prompt]:
 def get_prompt(name: str, arguments: dict[str, str] | None) -> list[PromptMessage]:
     d = _DEFS.get(name)
     if d is None:
-        raise not_found(f"未知 prompt: {name}(可用: {', '.join(sorted(_DEFS))})")
+        raise not_found(f"unknown prompt: {name} (available: {', '.join(sorted(_DEFS))})")
     supplied = arguments or {}
     kwargs: dict[str, str] = {}
     for arg_name, _desc, required in d.arguments:
         val = str(supplied.get(arg_name, "")).strip()
         if not val:
             if required:
-                raise invalid_input(f"prompt {name} 缺少必填参数: {arg_name}")
-            kwargs[arg_name] = "(未提供)"
+                raise invalid_input(f"prompt {name} missing required argument: {arg_name}")
+            kwargs[arg_name] = "(not provided)"
         else:
             kwargs[arg_name] = val
     # Optional-context lines for reduce_observation; empty when unsupplied.
     kwargs["pulsar_name_line"] = (
-        "" if kwargs.get("pulsar_name") == "(未提供)"
-        else f"脉冲星: {kwargs['pulsar_name']}。\n"
+        "" if kwargs.get("pulsar_name") == "(not provided)"
+        else f"Pulsar: {kwargs['pulsar_name']}.\n"
     )
     kwargs["dm_line"] = (
-        "" if kwargs.get("dm") == "(未提供)" else f"DM: {kwargs['dm']} pc cm^-3。\n"
+        "" if kwargs.get("dm") == "(not provided)" else f"DM: {kwargs['dm']} pc cm^-3.\n"
     )
     text = d.template.format(**kwargs)
     return [PromptMessage(role="user", content=TextContent(type="text", text=text))]

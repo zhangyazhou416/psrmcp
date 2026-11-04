@@ -92,12 +92,12 @@ def load_config(path: str | Path | None = None) -> Config:
     cfg_path = Path(path).expanduser()
     if not cfg_path.exists():
         if os.environ.get(CONFIG_ENV_VAR):  # explicitly configured but missing -> error
-            raise config_error(f"配置文件不存在: {cfg_path}")
+            raise config_error(f"config file not found: {cfg_path}")
         return cfg
     try:
         raw = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as exc:
-        raise config_error(f"配置文件解析失败: {cfg_path}: {exc}") from exc
+        raise config_error(f"failed to parse config file: {cfg_path}: {exc}") from exc
     _apply(cfg, raw)
     cfg.source_path = cfg_path
     return cfg
@@ -111,7 +111,7 @@ def _apply(cfg: Config, raw: dict) -> None:  # noqa: C901
 
     section = raw.get("server", {})
     if not isinstance(section, dict):
-        bad("[server] 必须是表")
+        bad("[server] must be a table")
     else:
         srv = cfg.server
         for key, target in (
@@ -133,12 +133,12 @@ def _apply(cfg: Config, raw: dict) -> None:  # noqa: C901
 
     section = raw.get("data", {})
     if not isinstance(section, dict):
-        bad("[data] 必须是表")
+        bad("[data] must be a table")
     else:
         if "read_roots" in section:
             roots = section["read_roots"]
             if not isinstance(roots, list) or not all(isinstance(r, str) for r in roots):
-                bad("data.read_roots 必须是字符串数组")
+                bad("data.read_roots must be an array of strings")
             else:
                 cfg.data.read_roots = [Path(r).expanduser() for r in roots]
         if "allow_absolute_paths" in section:
@@ -146,13 +146,13 @@ def _apply(cfg: Config, raw: dict) -> None:  # noqa: C901
 
     section = raw.get("backends", {})
     if not isinstance(section, dict):
-        bad("[backends] 必须是表")
+        bad("[backends] must be a table")
     else:
         for key in ("dspsr", "psrchive_bin", "tempo2", "psrcat"):
             if key in section:
                 v = section[key]
                 if v is not None and not isinstance(v, str):
-                    bad(f"backends.{key} 必须是字符串或 null")
+                    bad(f"backends.{key} must be a string or null")
                 else:
                     setattr(cfg.backends, key, Path(v).expanduser() if v else None)
         for key in ("pint_enabled", "tempo2_enabled"):
@@ -161,11 +161,11 @@ def _apply(cfg: Config, raw: dict) -> None:  # noqa: C901
 
     section = raw.get("catalog", {})
     if not isinstance(section, dict):
-        bad("[catalog] 必须是表")
+        bad("[catalog] must be a table")
     else:
         if "mode" in section:
             if section["mode"] not in ("local", "online", "auto"):
-                bad("catalog.mode 必须是 local|online|auto")
+                bad("catalog.mode must be local|online|auto")
             else:
                 cfg.catalog.mode = section["mode"]
         if "database" in section:
@@ -175,21 +175,21 @@ def _apply(cfg: Config, raw: dict) -> None:  # noqa: C901
 
     section = raw.get("limits", {})
     if not isinstance(section, dict):
-        bad("[limits] 必须是表")
+        bad("[limits] must be a table")
     else:
         for key in ("max_threads", "max_input_gb", "max_output_gb", "max_result_kb"):
             if key in section:
                 _set(section, key, key, cfg.limits, bad)
 
     if problems:
-        raise config_error("配置无效: " + "; ".join(problems), details={"problems": problems})
+        raise config_error("invalid config: " + "; ".join(problems), details={"problems": problems})
 
 
 def _set(section: dict, key: str, attr: str, target: object, bad) -> None:  # noqa: ANN001
     try:
         setattr(target, attr, section[key])
     except (TypeError, ValueError):
-        bad(f"{key} 类型无效")
+        bad(f"{key} has an invalid type")
 
 
 def workspace_root(cfg: Config) -> Path:

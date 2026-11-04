@@ -36,8 +36,8 @@ DSPSR_SPEC = BackendSpec(
 PSRCHIVE_SPEC = BackendSpec(
     name="psrchive",
     probes=(
-        # 实测:psrstat/psradd/psrconv 的 --version 打印 "PSRCHIVE <日期> <commit>";
-        # psrchive_config 只 dump 配置无版本,vap/pat 不认 --version。
+        # Verified: psrstat/psradd/psrconv --version print "PSRCHIVE <date> <commit>";
+        # psrchive_config only dumps config with no version; vap/pat reject --version.
         ("psrstat", ("--version",), r"(PSRCHIVE\s+\S+\s+\S+|[0-9]+\.[^\s]+)"),
         ("psrchive-config", ("--version",), r"([0-9]+\.[^\s]+)"),
     ),
@@ -122,7 +122,7 @@ class BackendManager:
     async def require(self, name: str) -> BackendInfo:
         info = await self.get(name)
         if not info.available:
-            reason = info.reason or "不可用"
+            reason = info.reason or "unavailable"
             raise env_missing(name, reason)
         return info
 
@@ -137,14 +137,14 @@ class BackendManager:
             if info.available:
                 return info
         reasons = {
-            "dspsr": "未在 PATH 或配置路径中找到 dspsr",
-            "psrchive": "未找到 psrchive 工具链(psrstat/psrchive-config)",
-            "tempo2": "未找到 tempo2,或 tempo2 未启用",
-            "psrcat": "未找到 psrcat 二进制",
+            "dspsr": "dspsr not found on PATH or in the configured path",
+            "psrchive": "psrchive toolchain not found (psrstat/psrchive-config)",
+            "tempo2": "tempo2 not found, or tempo2 not enabled",
+            "psrcat": "psrcat binary not found",
         }
-        unavailable_reason = reasons.get(spec.name, f"未找到 {spec.name}")
+        unavailable_reason = reasons.get(spec.name, f"{spec.name} not found")
         if spec.name == "tempo2" and not self._cfg.backends.tempo2_enabled:
-            unavailable_reason = "配置中 tempo2_enabled=false"
+            unavailable_reason = "tempo2_enabled=false in config"
         return BackendInfo(available=False, reason=unavailable_reason, capabilities=list(spec.capabilities))
 
     async def _probe_binary(self, spec: BackendSpec, path: str, args: list[str], regex: str) -> BackendInfo:
@@ -155,7 +155,7 @@ class BackendManager:
         text = (result.stdout_text + result.stderr_text).strip()
         if result.exit_code != 0 and not text:
             return BackendInfo(
-                available=False, path=path, reason=f"版本查询退出码 {result.exit_code}"
+                available=False, path=path, reason=f"version probe exited with code {result.exit_code}"
             )
         m = re.search(regex, text)
         version = m.group(1) if m else text.splitlines()[0][:80] if text else None
@@ -163,7 +163,7 @@ class BackendManager:
 
     async def _probe_python(self, spec: BackendSpec) -> BackendInfo:
         if spec.name == "pint" and not self._cfg.backends.pint_enabled:
-            return BackendInfo(available=False, reason="配置中 pint_enabled=false")
+            return BackendInfo(available=False, reason="pint_enabled=false in config")
         try:
             result = await self._runner.run(
                 [
@@ -180,6 +180,6 @@ class BackendManager:
         if result.exit_code != 0 or version is None:
             return BackendInfo(
                 available=False,
-                reason=f"python 包 {spec.name} 导入失败: {result.stderr_tail(400)}",
+                reason=f"python package {spec.name} failed to import: {result.stderr_tail(400)}",
             )
         return BackendInfo(available=True, version=version, capabilities=list(spec.capabilities))

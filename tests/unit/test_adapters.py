@@ -11,8 +11,8 @@ from psrmcp.adapters import psrchive as psa
 from psrmcp.adapters import tempo2 as t2a
 
 
-# 实测样本(PSRCHIVE 2026-10-16):头列名是 filename,关键字是 nsub,
-# 缺失值打印 INVALID
+# Real sample (PSRCHIVE 2026-10-16): header column is filename, keyword is nsub,
+# missing values print INVALID
 VAP_SAMPLE = """\
 filename  name ra dec dm period freq bw nchan npol nbin nsub duration telescope
 tap.ar J0437-4715 04:37:15.8 -47:15.09 2.645 0.0057575 1367.5 256 8 2 1024 512 600 Parkes
@@ -24,12 +24,12 @@ def test_parse_vap():
     assert fields["name"] == "J0437-4715"
     assert math.isclose(fields["archive_dm"], 2.645, rel_tol=1e-9)
     assert fields["ra_str"] == "04:37:15.8"
-    assert fields["nsubint"] == 512  # vap 关键字 nsub 映射到 nsubint 字段
+    assert fields["nsubint"] == 512  # vap keyword nsub maps to the nsubint field
     assert fields["telescope"] == "Parkes"
 
 
 def test_parse_vap_invalid_and_legacy_header():
-    # 列数不足时按 VAP_KEYS 顺序保留原始值;INVALID 归一为 None
+    # with fewer columns, raw values are kept in VAP_KEYS order; INVALID normalizes to None
     legacy = psa.parse_vap(
         "File  name ra dec dm period freq bw nchan npol nbin nsub duration telescope\n"
         "x.ar J0437-4715 INVALID -47:15.09 2.645 0.0057575 1367.5 256 8 2 1024 512 600 Parkes\n"
@@ -40,20 +40,21 @@ def test_parse_vap_invalid_and_legacy_header():
 
 
 def test_psrstat_parse():
-    # 实测格式:`psrstat -c snr,wt,w50 file` → `file snr=... wt=- w50=-`
+    # observed format: `psrstat -c snr,wt,w50 file` → `file snr=... wt=- w50=-`
     out = psa.parse_psrstat("/data/PSR.ar snr=133.858 wt=- w50=-\n")
     assert math.isclose(out["snr"], 133.858, rel_tol=1e-9)
     assert out["wt"] is None  # "-" -> None
     assert out["w50"] is None
     assert out["_filename"] == "/data/PSR.ar"
-    # -Q 变体:裸值列表
+    # -Q variant: bare value list
     q = psa.parse_psrstat("/data/PSR.ar 133.858 - -\n")
     assert q["_positional"][0] == 133.858 and q["_positional"][1] is None
 
 
 def test_psrcat_row_and_units():
-    # 实测 9 列(name raj decj p0 f0 p1 dm binary assoc),-o short 行首带行号;
-    # binary 列是 BINARY 模型(T2/...;孤立脉冲星为 "*",解析为 None)
+    # observed 9 columns (name raj decj p0 f0 p1 dm binary assoc); -o short rows
+    # carry a leading line number; the binary column holds a BINARY model
+    # (T2/...; isolated pulsars print "*", parsed as None)
     row = pc.parse_psrcat_row(
         "1     J0437-4715    04:37:15.8  -47:15.09  0.0057575  173.687946 "
         "5.73e-20  2.65  T2  GRS:4FGL[aab+22]"
@@ -103,11 +104,12 @@ def test_dedisperse_cmd_shape():
     argv = dsp.dedisperse_cmd("dspsr", "obs.fil", dm=2.645, nbin=1024, out_ext="ar")
     assert argv[0] == "dspsr"
     assert "-D" in argv and "2.645" in argv
-    assert "-E" not in argv  # 无 ephemeris 时不传 -E
+    assert "-E" not in argv  # no ephemeris -> no -E flag
     assert not any(";" in a or "|" in a for a in argv)
 
     argv_e = dsp.dedisperse_cmd("dspsr", "obs.fil", dm=2.645, ephemeris="/tmp/j0437.par")
-    # 实测 -E file 让 dspsr 用 par 生成相位预测器(filterbank 等无内嵌 predictor 的输入必需)
+    # observed: -E file makes dspsr build a phase predictor from the par
+    # (required for filterbank and other inputs without an embedded predictor)
     assert argv_e[argv_e.index("-E") + 1] == "/tmp/j0437.par"
 
 

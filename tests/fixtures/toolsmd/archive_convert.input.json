@@ -9,7 +9,7 @@
   "properties": {
     "archive": {
       "type": "string",
-      "description": "artifact ID 或 read root 下的相对路径"
+      "description": "Artifact ID or relative path under a read root"
     },
     "root": {
       "type": "string"

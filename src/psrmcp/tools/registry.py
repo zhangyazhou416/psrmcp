@@ -67,7 +67,7 @@ class ToolRegistry:
     async def dispatch(self, name: str, arguments: dict[str, Any] | None) -> CallToolResult:
         spec = self._specs.get(name)
         if spec is None:
-            return _error_result(invalid_input(f"未知工具: {name}"))
+            return _error_result(invalid_input(f"unknown tool: {name}"))
         try:
             try:
                 tool_input = spec.input_model.model_validate(arguments or {})
@@ -119,7 +119,7 @@ def _validation_error(tool: str, exc: ValidationError) -> PsrmcpError:
     first = exc.errors()[0]
     loc = ".".join(str(x) for x in first.get("loc", ()))
     msg = first.get("msg", "invalid input")
-    return invalid_input(f"{tool}: 参数无效 {loc}: {msg}", hint="检查参数类型与取值范围")
+    return invalid_input(f"{tool}: invalid argument {loc}: {msg}", hint="check argument types and value ranges")
 
 
 def _result_envelope(result: Any) -> CallToolResult:
@@ -138,7 +138,7 @@ def _error_result(exc: PsrmcpError) -> CallToolResult:
     body = exc.as_dict()
     text = f"**[{body['code']}]** {body['message']}"
     if body.get("hint"):
-        text += f"\n提示: {body['hint']}"
+        text += f"\nHint: {body['hint']}"
     return CallToolResult(
         content=[TextContent(type="text", text=text)],
         structuredContent={"result_type": "failed", "error": body},

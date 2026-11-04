@@ -1,12 +1,12 @@
 #!/usr/bin/env python
-"""生成合成 SIGPROC filterbank 测试数据(ws/synth.fil)。
+"""Generate synthetic SIGPROC filterbank test data (ws/synth.fil).
 
-1.4 GHz 频带、128 通道、8 bit,内嵌一条按 DM 色散的啁啾脉冲,
-供 scripts/live_check.py 的 dedisperse 步骤做真实 dspsr 端到端验证。
-psrchive 文档自带的 PSR.ar 是退化的 CPSR2 样本(TBIN='*'),dspsr 无法读取,
-不能作为 dedisperse 的测试输入,故用本生成器补位。
+1.4 GHz band, 128 channels, 8 bit, with a DM-dispersed chirp pulse embedded,
+so the dedisperse step of scripts/live_check.py gets a real dspsr end-to-end check.
+PSR.ar shipped with the psrchive docs is a degenerate CPSR2 sample (TBIN='*') that
+dspsr cannot read, so it cannot serve as dedisperse input; this generator fills that gap.
 
-用法:uv run python scripts/make_synth_fil.py [输出路径,默认 ws/synth.fil]
+Usage: uv run python scripts/make_synth_fil.py [output path, default ws/synth.fil]
 """
 
 from __future__ import annotations
@@ -20,9 +20,9 @@ TSAMP = 3.28e-5      # s per sample
 NCHAN = 128
 NSAMP = 4096
 FOFF = -0.1953125    # MHz per channel
-FCH1 = 1446.484375   # MHz, channel 0 中心频率(最高频)
+FCH1 = 1446.484375   # MHz, channel 0 centre frequency (highest)
 DM = 2.645
-TELESCOPE_ID = 4     # Parkes(dspsr/tempo2 有坐标;id 0 = "Fake" 会被拒绝)
+TELESCOPE_ID = 4     # Parkes (dspsr/tempo2 have coordinates; id 0 = "Fake" gets rejected)
 
 
 def _name(k: str) -> bytes:
@@ -31,7 +31,7 @@ def _name(k: str) -> bytes:
 
 
 def _item_d(k: str, v: float) -> bytes:
-    # 注意:数值项是裸值,没有长度前缀(字符串才有)
+    # numeric items are bare values with no length prefix (strings only)
     return _name(k) + struct.pack("d", v)
 
 

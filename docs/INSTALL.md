@@ -1,109 +1,115 @@
-# 脉冲星软件栈一键安装(install_pulsar_stack.sh)
+# One-shot pulsar software stack installer (install_pulsar_stack.sh)
 
-`scripts/install_pulsar_stack.sh` 把脉冲星天文工具链**全部从源码**编译进单一前缀
-(默认 `~/Pulsar`;若 shell 里已导出 `PSRSOFT_DIR` 则优先用它,可用 `--prefix` 覆盖):
+English | [简体中文](INSTALL-zh.md)
 
-- **不用 Docker、不用 conda-forge**(C/C++/Fortran 工具全部系统依赖 + 源码编译)
-- **来源全部实测校准**(2026-10):tempo2 = github ipta、dspsr = SourceForge、
-  psrchive = gitlab pulsar-astronomy、psrcat = 本地 tarball + `gcc -fcommon`、
-  pgplot = ASTRON 镜像;ATNF/Caltech 等已失效地址不再尝试
-- **psrchive/dspsr 的 API 漂移已内建处理**:psrchive ≥ 2026-05 的
-  `Signal::* → Convention::*` 改名、`Calibration::Faraday → MEAL::Faraday` 等,
-  安装器对 dspsr 打幂等补丁(模式消失即跳过,重复运行安全)
-- **自动隔离 conda**:构建前会把 `~/miniconda3`、`~/anaconda3`、`~/mambaforge`
-  从 `PATH` 剔除,避免 conda 的 `python` / `libstdc++` 干扰 `configure`
-- **CUDA 自动探测**:存在 `/usr/local/cuda` 时 dspsr 自动启用 CUDA 后端
+`scripts/install_pulsar_stack.sh` builds the entire pulsar-astronomy toolchain **from source**
+into a single prefix (default `~/Pulsar`; an exported `PSRSOFT_DIR` takes precedence, and
+`--prefix` overrides both):
 
-## 1. 前置条件
+- **No Docker, no conda-forge** (all C/C++/Fortran tools: system deps + source builds)
+- **Every source location is field-verified** (2026-10): tempo2 = github ipta, dspsr = SourceForge,
+  psrchive = gitlab pulsar-astronomy, psrcat = local tarball + `gcc -fcommon`,
+  pgplot = ASTRON mirror; dead locations such as ATNF/Caltech are no longer attempted
+- **psrchive/dspsr API drift is handled in the installer**: psrchive ≥ 2026-05 renames such as
+  `Signal::* → Convention::*` and `Calibration::Faraday → MEAL::Faraday`;
+  the installer patches dspsr idempotently (skipped once the pattern disappears, safe to re-run)
+- **conda is isolated automatically**: before building, `~/miniconda3`, `~/anaconda3`, `~/mambaforge`
+  are stripped from `PATH` so conda's `python` / `libstdc++` cannot interfere with `configure`
+- **CUDA auto-detection**: when `/usr/local/cuda` exists, dspsr automatically enables its CUDA backend
 
-| 项目 | 要求 |
+## 1. Prerequisites
+
+| Item | Requirement |
 | --- | --- |
-| 系统 | Debian 系(Deepin 25 / Debian 12+);其他发行版会给出手动安装清单后退出 |
-| 权限 | `sudo`(仅 apt-deps 阶段需要 root) |
-| 磁盘 | ≥ 20GB 空闲(全栈源码 + 编译产物约 8–15GB) |
-| 时间 | 约 20–40 分钟(20 核、`-j20`) |
-| 工具 | gcc/make/git(缺失时 apt-deps 会装);`uv` 可选(没有则回退 `python3 -m venv`) |
-| 手动下载 | **psrcat tarball**(见 §3 psrcat 阶段;ATNF 下载地址已失效) |
+| System | Debian-based (Deepin 25 / Debian 12+); other distros print a manual install list and exit |
+| Privileges | `sudo` (root only needed for the apt-deps stage) |
+| Disk | ≥ 20GB free (full-stack sources + build artifacts ≈ 8–15GB) |
+| Time | ≈ 20–40 minutes (20 cores, `-j20`) |
+| Tools | gcc/make/git (apt-deps installs them if missing); `uv` optional (falls back to `python3 -m venv`) |
+| Manual download | **psrcat tarball** (see the psrcat stage in §3; the ATNF download URL is dead) |
 
-## 2. 快速开始
+## 2. Quick start
 
 ```bash
-# 先看看会做什么(零副作用:不建目录、不 apt、不联网)
+# See what it would do first (zero side effects: no directories, no apt, no network)
 bash scripts/install_pulsar_stack.sh --dry-run
 
-# 全栈安装(deps + tempo + tempo2 + pgplot + psrchive + dspsr + psrcat + Python venv)
+# Full stack (deps + tempo + tempo2 + pgplot + psrchive + dspsr + psrcat + Python venv)
 bash scripts/install_pulsar_stack.sh
 
-# 连 PRESTO 一起装(可选组件,失败只警告不中止)
+# Include PRESTO (optional component; failure only warns, never aborts)
 bash scripts/install_pulsar_stack.sh --with-presto
 
-# 无人值守(CI / 脚本里调用必须加 --yes)
+# Unattended (CI / script calls must pass --yes)
 bash scripts/install_pulsar_stack.sh --yes
 ```
 
-安装完成后:
+After the install completes:
 
 ```bash
-source ~/Pulsar/env.sh       # 或者: source scripts/dev_env.sh
+source ~/Pulsar/env.sh       # or: source scripts/dev_env.sh
 tempo2 -v
 psrchive-config --version
 dspsr --version
 psrcat -v
-cat ~/Pulsar/share/pulsar-stack/selfcheck.json   # 机器可读的自检报告
+cat ~/Pulsar/share/pulsar-stack/selfcheck.json   # machine-readable self-check report
 ```
 
-## 3. 安装阶段
+## 3. Install stages
 
-| 阶段 | 内容 | 失败行为 |
+| Stage | What it does | On failure |
 | --- | --- | --- |
-| `preflight` | `LC_ALL=C`;剔除 conda 的 PATH;检查 gcc/make/git;检查磁盘 ≥ 20GB;建 `$PREFIX/{src,bin,lib,share,logs,.stack,psrcat,tempo2}` | 失败即停 |
-| `apt-deps` | build-essential、gfortran、autoconf-archive、libgsl-dev、libglib2.0-dev、libpng-dev、libx11-dev、patch、perl、rsync、ninja-build 等(见脚本内 `APT_PKGS`;**不含** cfitsio/fftw/tcsh,原因见下) | 失败即停 |
-| `python-venv` | `uv venv --python 3.12 $PREFIX/venv`,再按 `versions.env` 精确 pin 装 mcp / pydantic / astropy / pint-pulsar / psrqpy / matplotlib / numpy / pytest | 失败即停 |
-| `deps` | 源码编译 **fftw 3.2.2 单精度**(`--enable-float` → libfftw3f)与 **cfitsio 3.49 重入版**(`--enable-reentrant` + `make shared`)进前缀。apt 的 libfftw3-dev 只有双精度、libcfitsio-dev 非重入,psrchive 硬依赖这两个变体,必须自建 | 失败即停 |
-| `tempo` | 经典 tempo(git.code.sf.net/p/tempo/tempo)→ `autoreconf --install`(上游 `./prepare` 是 csh,内容即此命令)→ configure/make/install | **可选**:失败只警告 |
-| `tempo2` | github.com/ipta/tempo2 + checkout pin → **rsync 仓库内 `T2runtime/` 到 `$TEMPO2=$PREFIX/tempo2`**(先于 bootstrap)→ `./bootstrap` → `./configure --prefix --enable-shared` → make/install | 失败即停 |
-| `pgplot` | ASTRON 镜像 tarball + psrchive 源码树 `packages/*.patch`;gfortran≥10 需 `-fallow-argument-mismatch`;驱动选 PNG/PostScript/XW;`make cpg` 供 psrplot 等使用 | **可选**:失败只警告 |
-| `psrchive` | gitlab pulsar-astronomy + checkout → bootstrap → `./configure --prefix` → make/install(pgplot 已就位则自动启用绘图 CLI) | 失败即停 |
-| `dspsr` | git.code.sf.net/p/dspsr/code + checkout → 写 `backends.list`(实测可编译的 28 个后端,单行)→ **打 psrchive API 兼容补丁(幂等)** → **从 psrchive 源码树 `.build-commons/autoconf/` 补齐缺失 m4 宏** → bootstrap → `./configure --prefix F77=gfortran CFLAGS=-fPIC FFLAGS=-fPIC CPPFLAGS="-I$PREFIX/include -I$PREFIX/include/MEAL" TEMPO2="$PREFIX"`(+ CUDA 目录若存在)→ make/install | 失败即停 |
-| `psrcat` | 查找本地 tarball(`--psrcat-tarball` → `$SRC_DIR` → `~/Downloads` → cwd)→ 解压 → `gcc -fcommon -O2 -o psrcat *.c -lm`(**无需 tcsh/makeit**)→ 安装 `$PREFIX/bin/psrcat` + `$PREFIX/psrcat/psrcat.db` | 失败即停 |
-| `presto` | venv 里装 meson → `meson setup build --prefix` → compile/install → venv 里 `pip install ./python` | **可选**:失败只警告 |
-| `self-check` | 逐组件版本探测;写 `$PREFIX/share/pulsar-stack/selfcheck.json`;生成 `env.sh`;打印彩色汇总表 | 失败即停 |
+| `preflight` | `LC_ALL=C`; strips conda from PATH; checks gcc/make/git; checks disk ≥ 20GB; creates `$PREFIX/{src,bin,lib,share,logs,.stack,psrcat,tempo2}` | fail aborts |
+| `apt-deps` | build-essential, gfortran, autoconf-archive, libgsl-dev, libglib2.0-dev, libpng-dev, libx11-dev, patch, perl, rsync, ninja-build, etc. (see `APT_PKGS` in the script; **excludes** cfitsio/fftw/tcsh — reason below) | fail aborts |
+| `python-venv` | `uv venv --python 3.12 $PREFIX/venv`, then installs mcp / pydantic / astropy / pint-pulsar / psrqpy / matplotlib / numpy / pytest at the exact pins from `versions.env` | fail aborts |
+| `deps` | builds **fftw 3.2.2 single-precision** (`--enable-float` → libfftw3f) and **cfitsio 3.49 reentrant** (`--enable-reentrant` + `make shared`) from source into the prefix. apt's libfftw3-dev is double-precision only and libcfitsio-dev is non-reentrant; psrchive hard-depends on these two variants, so both must be self-built | fail aborts |
+| `tempo` | classic tempo (git.code.sf.net/p/tempo/tempo) → `autoreconf --install` (upstream's `./prepare` is a csh script whose content is exactly this command) → configure/make/install | **optional**: failure only warns |
+| `tempo2` | github.com/ipta/tempo2 + checkout pin → **rsyncs the repo's `T2runtime/` to `$TEMPO2=$PREFIX/tempo2`** (before bootstrap) → `./bootstrap` → `./configure --prefix --enable-shared` → make/install | fail aborts |
+| `pgplot` | tarball from the ASTRON mirror + `packages/*.patch` from the psrchive source tree; gfortran≥10 needs `-fallow-argument-mismatch`; drivers: PNG/PostScript/XW; `make cpg` for psrplot and friends | **optional**: failure only warns |
+| `psrchive` | gitlab pulsar-astronomy + checkout → bootstrap → `./configure --prefix` → make/install (plotting CLIs enabled automatically if pgplot is in place) | fail aborts |
+| `dspsr` | git.code.sf.net/p/dspsr/code + checkout → writes `backends.list` (the 28 backends observed to compile, one line) → **applies psrchive API compatibility patches (idempotent)** → **tops up missing m4 macros from the psrchive tree's `.build-commons/autoconf/`** → bootstrap → `./configure --prefix F77=gfortran CFLAGS=-fPIC FFLAGS=-fPIC CPPFLAGS="-I$PREFIX/include -I$PREFIX/include/MEAL" TEMPO2="$PREFIX"` (+ CUDA dirs if present) → make/install | fail aborts |
+| `psrcat` | finds a local tarball (`--psrcat-tarball` → `$SRC_DIR` → `~/Downloads` → cwd) → extracts → `gcc -fcommon -O2 -o psrcat *.c -lm` (**no tcsh/makeit needed**) → installs `$PREFIX/bin/psrcat` + `$PREFIX/psrcat/psrcat.db` | fail aborts |
+| `presto` | installs meson into the venv → `meson setup build --prefix` → compile/install → `pip install ./python` in the venv | **optional**: failure only warns |
+| `self-check` | probes each component's version; writes `$PREFIX/share/pulsar-stack/selfcheck.json`; generates `env.sh`; prints a colored summary table | fail aborts |
 
-> **configure 期 TEMPO2 与运行期 TEMPO2 是两回事**:dspsr 的 tempo2 宏按
-> `$TEMPO2/include` 找头文件,所以 configure 行传 `TEMPO2="$PREFIX"`(安装根);
-> 而运行期 `TEMPO2=$PREFIX/tempo2`(T2runtime 数据目录,env.sh 里导出的就是它)。
+> **The configure-time TEMPO2 and the runtime TEMPO2 are two different things**: dspsr's tempo2
+> macro looks for headers under `$TEMPO2/include`, so the configure line passes
+> `TEMPO2="$PREFIX"` (the install root); at runtime `TEMPO2=$PREFIX/tempo2` (the T2runtime data
+> directory — that is what env.sh exports).
 
-每个阶段成功后写 `<prefix>/.stack/<stage>.done`,内容包含 **git ref + 参数指纹哈希**。
-重跑时只要 URL、pin、configure 标志、包清单都没变,该阶段就直接跳过;改了
-`versions.env` 里的 pin 或换 `--prefix` 会自动触发重建。
+On success each stage writes `<prefix>/.stack/<stage>.done`, containing the **git ref + a hash of
+the input fingerprint**. On re-runs, as long as the URL, pin, configure flags, and package list
+are unchanged, the stage is skipped outright; changing a pin in `versions.env` or switching
+`--prefix` automatically triggers a rebuild.
 
-### 关于 pin
+### About pins
 
-`versions.env` 里 tempo2/psrchive/dspsr 的 `*_REF` 已固定为 **2026-10 实测装机成功的
-commit**(Deepin 25 / gcc 12 验证通过),保证可复现。想追新改成 `HEAD` 或别的
-commit 即可;临时试用用 `--pin-tempo2 <ref>` 等参数覆盖,不改文件。
+The `*_REF` values for tempo2/psrchive/dspsr in `versions.env` are pinned to **commits verified in
+a real 2026-10 install** (validated on Deepin 25 / gcc 12) for reproducibility. To track newer
+changes, set them to `HEAD` or another commit; for a temporary trial, override with
+`--pin-tempo2 <ref>` and friends without touching the file.
 
-## 4. 命令行参数
+## 4. Command-line options
 
-| 参数 | 默认 | 说明 |
+| Option | Default | Description |
 | --- | --- | --- |
-| `--prefix DIR` | `~/Pulsar`(`$PULSAR_PREFIX` > `$PSRSOFT_DIR`) | 安装前缀 |
-| `--jobs N` | `nproc` | 并行编译任务数 |
-| `--with-presto` | 关 | 连 PRESTO 一起装(可选阶段) |
-| `--without STAGE` | — | 跳过某阶段,可重复,如 `--without tempo --without pgplot` |
-| `--only STAGES` | — | 只跑这些阶段(逗号分隔),如 `--only tempo2,psrchive` |
-| `--psrcat-tarball PATH` | 自动搜索 | psrcat 本地源码包路径(ATNF 下载地址已失效,必看) |
-| `--pin-tempo2 REF` | `versions.env` | 临时覆盖 tempo2 的 pin(`--pin-psrchive/--pin-dspsr/--pin-presto` 同理) |
-| `--src-dir DIR` | `<prefix>/src` | 源码存放目录 |
-| `--env-file PATH` | `<prefix>/env.sh` | 环境文件输出路径 |
-| `--dry-run` | 关 | 只打印完整计划与每条将执行的命令,零副作用 |
-| `--yes` / `-y` | 关 | 无人值守:跳过 apt 一次性确认(非交互环境必加) |
-| `--no-color` | 关 | 关闭彩色输出(非 tty 自动关闭) |
-| `-h` / `--help` | — | 帮助 |
+| `--prefix DIR` | `~/Pulsar` (`$PULSAR_PREFIX` > `$PSRSOFT_DIR`) | install prefix |
+| `--jobs N` | `nproc` | parallel build jobs |
+| `--with-presto` | off | also install PRESTO (optional stage) |
+| `--without STAGE` | — | skip a stage; repeatable, e.g. `--without tempo --without pgplot` |
+| `--only STAGES` | — | run only these stages (comma-separated), e.g. `--only tempo2,psrchive` |
+| `--psrcat-tarball PATH` | auto-search | path to the local psrcat source package (the ATNF download URL is dead — read this) |
+| `--pin-tempo2 REF` | `versions.env` | temporarily override tempo2's pin (`--pin-psrchive`/`--pin-dspsr`/`--pin-presto` work the same way) |
+| `--src-dir DIR` | `<prefix>/src` | where sources are stored |
+| `--env-file PATH` | `<prefix>/env.sh` | where to write the env file |
+| `--dry-run` | off | print the full plan and every command that would run; zero side effects |
+| `--yes` / `-y` | off | unattended: skip the one-time apt confirmation (required in non-interactive environments) |
+| `--no-color` | off | disable colored output (auto-disabled when not a tty) |
+| `-h` / `--help` | — | show help |
 
-## 5. env.sh 提供什么
+## 5. What env.sh provides
 
-`$PREFIX/env.sh`(可用 `--env-file` 改路径)——与常见 PSRSOFT 环境约定一致:
+`$PREFIX/env.sh` (path changeable via `--env-file`) — follows the common PSRSOFT environment convention:
 
 ```bash
 export PULSAR_PREFIX="$HOME/Pulsar"
@@ -118,9 +124,11 @@ export PGPLOT_DIR="$PULSAR_PREFIX/pgplot"
 export PGPLOT_DEV=/xwindow
 ```
 
-`scripts/dev_env.sh` 是它的薄封装:再叠加激活仓库 `.venv`(或栈内 venv),适合交互 shell 与契约测试。
+`scripts/dev_env.sh` is a thin wrapper around it: on top it activates the repo's `.venv` (or the
+stack venv), suited to interactive shells and contract tests.
 
-> **MCP 服务器不需要 env.sh**:服务器的 `config.toml [backends]` 请直接写绝对路径,不依赖环境变量(见 [DESIGN.md §8.1](DESIGN.md)):
+> **The MCP server does not need env.sh**: write absolute paths directly in the server's
+> `config.toml [backends]`, without depending on environment variables (see [DESIGN.md §8.1](DESIGN.md)):
 
 ```toml
 [backends]
@@ -132,53 +140,62 @@ pint_enabled = true
 tempo2_enabled = true
 ```
 
-## 6. 疑难排查
+## 6. Troubleshooting
 
-1. **psrcat 下载失败 / tarball 缺失**
-   ATNF 的自动下载地址已失效(2026-10 实测 404),脚本不会联网下载。请到
-   ATNF psrcat 页面手动下载 `psrcat_pkg` tarball(实测可用版本 v2.6.1),
-   然后 `--psrcat-tarball PATH` 指定,或放到 `~/Downloads` / `--src-dir` 下。
-   编译命令是 `gcc -fcommon -o psrcat *.c -lm`(`-fcommon` 是新版 gcc 的硬要求)。
-2. **dspsr 编译报 `Signal::Basis` / `Calibration::Faraday` 不存在**
-   psrchive ≥ 2026-05 改了 API,安装器的 `patch_dspsr_for_psrchive` 会自动打补丁;
-   若上游 dspsr 已跟上,补丁自动跳过(幂等)。报其他未定义符号时看
-   `<prefix>/logs/<时间戳>_dspsr.log` 尾部,在补丁函数里补对应 sed 即可。
-3. **dspsr configure 报宏缺失(如 `PGPLOT_PROG` / `ac_pkg_swig`)**
-   dspsr 的 bootstrap 需要 psrchive 源码树 `.build-commons/autoconf/` 里的 m4 宏,
-   安装器的 `copy_psrchive_m4` 自动补;若 psrchive 源码树不在 `$SRC_DIR/psrchive`,
-   会告警——确认 `--src-dir` 指向的位置。
-4. **pgplot 编译失败(gfortran 传参不匹配)**
-   依赖 perl/patch(libpng-dev、libx11-dev 由 apt-deps 装);配置里已加
-   `-fallow-argument-mismatch -std=legacy`。上游补丁路径变化时检查
-   psrchive 源码树 `packages/pgplot.patch` 是否仍然存在。
-5. **T2runtime 缺失**
-   tempo2 仓库自带 `T2runtime/`,安装器 rsync 到 `$TEMPO2=$PREFIX/tempo2`;
-   若 git 检出不完整(无该目录),tempo2 能跑但没有时钟/星历,需手动补齐。
-6. **gitlab / github / sourceforge 网络问题**
-   每个仓库都有主地址 + 镜像地址;所有下载都有 3 次重试(退避 2/5/10 秒)。
-7. **conda 污染**
-   如果日志里 configure 选到了 conda 的 python,检查 `~/miniconda3` 是否在非常规路径
-   (脚本只剔除路径名含 `miniconda3|anaconda3|miniforge3|mambaforge` 的目录)。
+1. **psrcat download fails / tarball missing**
+   ATNF's automatic download URL is dead (404 in practice as of 2026-10); the script does not
+   download it from the network. Download the `psrcat_pkg` tarball manually from the ATNF psrcat
+   page (v2.6.1 verified working), then pass it via `--psrcat-tarball PATH`, or drop it under
+   `~/Downloads` / `--src-dir`. The build command is `gcc -fcommon -o psrcat *.c -lm`
+   (`-fcommon` is a hard requirement on newer gcc).
+2. **dspsr build reports `Signal::Basis` / `Calibration::Faraday` missing**
+   psrchive ≥ 2026-05 changed the API; the installer's `patch_dspsr_for_psrchive` patches
+   automatically. If upstream dspsr has caught up, the patch is skipped (idempotent). For other
+   undefined symbols, look at the tail of `<prefix>/logs/<timestamp>_dspsr.log` and add the
+   corresponding sed to the patch function.
+3. **dspsr configure reports missing macros (e.g. `PGPLOT_PROG` / `ac_pkg_swig`)**
+   dspsr's bootstrap needs the m4 macros in the psrchive source tree's `.build-commons/autoconf/`;
+   the installer's `copy_psrchive_m4` tops them up automatically. If the psrchive tree is not at
+   `$SRC_DIR/psrchive`, it warns — check where `--src-dir` points.
+4. **pgplot build fails (gfortran argument-mismatch errors)**
+   Needs perl/patch (libpng-dev and libx11-dev come from apt-deps); the config already adds
+   `-fallow-argument-mismatch -std=legacy`. If upstream's patch paths change, check that the
+   psrchive source tree's `packages/pgplot.patch` still exists.
+5. **T2runtime missing**
+   The tempo2 repo ships `T2runtime/`, which the installer rsyncs to `$TEMPO2=$PREFIX/tempo2`;
+   if the git checkout is incomplete (no such directory), tempo2 runs but has no clock/ephemeris
+   data — fill it in manually.
+6. **gitlab / github / sourceforge network problems**
+   Every repo has a primary URL + mirror URL; all downloads retry 3 times (backoff 2/5/10 seconds).
+7. **conda pollution**
+   If the logs show configure picking up conda's python, check whether `~/miniconda3` lives at an
+   unusual path (the script only strips directories whose path name contains
+   `miniconda3|anaconda3|miniforge3|mambaforge`).
 
-## 7. 重做单个阶段
+## 7. Re-running a single stage
 
-阶段 marker 在 `<prefix>/.stack/<stage>.done`,删掉对应文件再重跑即可强制重建:
+Stage markers live at `<prefix>/.stack/<stage>.done`; delete the file for a stage and re-run to
+force a rebuild:
 
 ```bash
-rm ~/Pulsar/.stack/psrchive.done         # 只重建 psrchive
+rm ~/Pulsar/.stack/psrchive.done         # rebuild psrchive only
 bash scripts/install_pulsar_stack.sh --only psrchive --yes
 ```
 
-也可以用 `--pin-*` 换一个 ref 来触发重建(输入指纹变化会自动判定"需要重建"):
+You can also trigger a rebuild by switching the ref with `--pin-*` (a changed input fingerprint is
+automatically judged as "needs rebuild"):
 
 ```bash
 bash scripts/install_pulsar_stack.sh --only dspsr --pin-dspsr <commit> --yes
 ```
 
-PRESTO 失败后重试:删除 `<prefix>/.stack/presto.skipped` 与 `<prefix>/.stack/presto.done`,再 `--with-presto` 重跑。
+Retrying after a PRESTO failure: delete `<prefix>/.stack/presto.skipped` and `<prefix>/.stack/presto.done`, then re-run with `--with-presto`.
 
-## 8. 与仓库其他部分的关系
+## 8. Relation to the rest of the repo
 
-- 契约测试:`PSRMCP_CONTRACT=1 uv run pytest tests/contract`,依赖本脚本装好的栈;`scripts/dev_env.sh` 可以一次准备 shell + venv。
-- 环境自检工具(`pulsar_environment`)按 `config.toml [backends]` 的绝对路径探测,栈未安装时服务器会优雅降级,不会崩溃。
-- 设计背景见 [DESIGN.md](DESIGN.md),工具契约见 [TOOLS.md](TOOLS.md)。
+- Contract tests: `PSRMCP_CONTRACT=1 uv run pytest tests/contract` depend on the stack installed
+  by this script; `scripts/dev_env.sh` prepares shell + venv in one go.
+- The environment self-check tool (`pulsar_environment`) probes the absolute paths in
+  `config.toml [backends]`; when the stack is not installed the server degrades gracefully and
+  never crashes.
+- Design background: [DESIGN.md](DESIGN.md); tool contracts: [TOOLS.md](TOOLS.md).
