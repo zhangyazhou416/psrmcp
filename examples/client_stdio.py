@@ -3,7 +3,7 @@
 Usage:
     uv run python examples/client_stdio.py [--config path/to/config.toml]
 
-Exits non-zero if fewer than 19 tools are listed or the round-trip fails.
+Exits non-zero if fewer than 20 tools are listed or the round-trip fails.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Input models for all 19 tools (TOOLS.md section 5 schemas, 1:1).
+"""Input models for all 20 tools (TOOLS.md section 5 schemas, 1:1).
 
 All models forbid extra properties, mirroring `additionalProperties: false`.
 """
@@ -44,6 +44,11 @@ class CatalogSearchInput(BaseModel):
     p0_max_s: float | None = Field(default=None, gt=0)
     dm_min: float | None = Field(default=None, ge=0)
     dm_max: float | None = Field(default=None, ge=0)
+    pb_min_s: float | None = Field(default=None, gt=0)
+    pb_max_s: float | None = Field(default=None, gt=0)
+    flux_min_mjy: float | None = Field(default=None, ge=0)
+    gb_min: float | None = Field(default=None, ge=-90, le=90)
+    gb_max: float | None = Field(default=None, ge=-90, le=90)
     binary_only: bool = False
     fields: list[str] | None = None
     limit: int = Field(default=50, ge=1, le=200)
@@ -57,11 +62,32 @@ class CatalogSearchInput(BaseModel):
             raise ValueError("p0_min_s must not be greater than p0_max_s")
         if self.dm_min is not None and self.dm_max is not None and self.dm_min > self.dm_max:
             raise ValueError("dm_min must not be greater than dm_max")
+        if self.pb_min_s is not None and self.pb_max_s is not None and self.pb_min_s > self.pb_max_s:
+            raise ValueError("pb_min_s must not be greater than pb_max_s")
+        if self.gb_min is not None and self.gb_max is not None and self.gb_min > self.gb_max:
+            raise ValueError("gb_min must not be greater than gb_max")
         has_filter = any(v is not None for v in
-                         (self.name, self.ra_deg, self.p0_min_s, self.p0_max_s, self.dm_min, self.dm_max))
+                         (self.name, self.ra_deg, self.p0_min_s, self.p0_max_s, self.dm_min, self.dm_max,
+                          self.pb_min_s, self.pb_max_s, self.flux_min_mjy, self.gb_min, self.gb_max))
         if not has_filter and not self.binary_only:
             raise ValueError("provide at least one filter (name/position/period/DM/binary_only)")
         return self
+
+
+class CatalogQueryInput(BaseModel):
+    """Power-user escape hatch: a raw psrcat `-l` expression (catalog_query).
+
+    Runs against the local psrcat backend only. The expression is sanitized
+    (printable ASCII, length-capped) in the adapter; columns come from a
+    whitelist, so a malformed expression can at worst fail the query — it
+    cannot touch files or spawn anything.
+    """
+
+    model_config = FORBID
+    expression: str = Field(min_length=3, max_length=500)
+    columns: list[str] | None = Field(default=None, max_length=10)
+    limit: int = Field(default=50, ge=1, le=200)
+    cursor: str | None = None
 
 
 class CatalogGetInput(BaseModel):

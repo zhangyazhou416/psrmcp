@@ -39,6 +39,28 @@
       "type": "number",
       "minimum": 0
     },
+    "pb_min_s": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "pb_max_s": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "flux_min_mjy": {
+      "type": "number",
+      "minimum": 0
+    },
+    "gb_min": {
+      "type": "number",
+      "minimum": -90,
+      "maximum": 90
+    },
+    "gb_max": {
+      "type": "number",
+      "minimum": -90,
+      "maximum": 90
+    },
     "binary_only": {
       "type": "boolean",
       "default": false
@@ -46,22 +68,9 @@
     "fields": {
       "type": "array",
       "items": {
-        "enum": [
-          "name",
-          "aliases",
-          "ra_deg",
-          "dec_deg",
-          "p0_s",
-          "f0_hz",
-          "p1",
-          "dm",
-          "binary",
-          "binary_model",
-          "observatory",
-          "catalog_version"
-        ]
+        "type": "string"
       },
-      "maxItems": 12
+      "description": "Extra psrcat columns to return in extra_fields: age bsurf edot dist s400 s1400 w50 w10 pb a1 ecc om gl gb"
     },
     "limit": {
       "type": "integer",

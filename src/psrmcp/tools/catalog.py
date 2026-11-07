@@ -1,7 +1,8 @@
-"""catalog_search / catalog_get / ephemeris_export (TOOLS.md 5.3-5.5).
+"""catalog_search / catalog_get / catalog_query / ephemeris_export (TOOLS.md 5.3-5.6).
 
 Primary backend: psrcat binary (offline via PSRCAT_FILE/-db). Fallback (mode
 online/auto, psrcat missing): psrqpy against ATNF online, run in a thread.
+catalog_query is the raw `-l` power tool and requires the local psrcat.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from ..execution.workspace import utcnow
 from ..models.common import ArtifactKind, CatalogMeta, CatalogMode, CatalogRecord, WarningInfo
 from ..models.inputs import (
     CatalogGetInput,
+    CatalogQueryInput,
     CatalogSearchInput,
     EphemerisExportInput,
     EphemerisOverrides,
@@ -39,10 +41,26 @@ _NAME_FIX = re.compile(r"^(J|B)?(\d{4}[+-]\d{2,4})$", re.IGNORECASE)
 def register(reg: ToolRegistry) -> None:
     reg.add(ToolSpec(
         name="catalog_search",
-        description="Search the ATNF pulsar catalogue: filter by name, sky cone, period, DM, and binarity. At least one criterion is required.",
+        description="Search the ATNF pulsar catalogue: filter by name, sky cone, period, DM, orbital period, flux, galactic latitude, and binarity. At least one criterion is required.",
         input_model=CatalogSearchInput,
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True),
         handler=_search,
+    ))
+    reg.add(ToolSpec(
+        name="catalog_query",
+        description=(
+            "Power query against the local psrcat with a raw -l expression, e.g. "
+            "\"p0 < 0.005 && s1400 > 5\". Numeric conditions on known psrcat columns "
+            "(name p0 f0 p1 dm binary assoc age bsurf edot dist s400 s1400 w50 w10 "
+            "pb a1 ecc om gl gb); unknown columns are rejected up front because psrcat "
+            "silently returns nothing for them. String comparisons do not match "
+            "(values carry citation suffixes and name equality is unsupported) — use "
+            "catalog_search for name/position lookups. Requires the local psrcat backend."
+        ),
+        input_model=CatalogQueryInput,
+        # local psrcat only — never reaches the online catalogue
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
+        handler=_query,
     ))
     reg.add(ToolSpec(
         name="catalog_get",
@@ -136,6 +154,11 @@ def _record_from_row(row: dict[str, Any]) -> CatalogRecord:
     dm = _opt_float(row.get("dm")) or 0.0
     model = row.get("binary_model")
     model = None if model in (None, "*", "0") else str(model)
+    # Anything beyond the fixed contract slots is a requested extra psrcat
+    # column (age, bsurf, pb, s1400, gb, ...) — surface it under extra_fields
+    known = {"name", "ra_str", "dec_str", "p0_s", "f0_hz", "p1", "dm",
+             "binary_model", "observatory", "catalog_version"}
+    extras = {k: v for k, v in row.items() if k not in known}
     return CatalogRecord(
         name=str(row.get("name", "?")),
         ra_deg=ra_deg,
@@ -148,6 +171,7 @@ def _record_from_row(row: dict[str, Any]) -> CatalogRecord:
         binary_model=model,
         observatory=_opt_str(row.get("observatory")),
         catalog_version=_opt_str(row.get("catalog_version")) or "unknown",
+        extra_fields=extras,
     )
 
 
@@ -187,8 +211,27 @@ async def _search_psrcat(ctx: AppContext, inp: CatalogSearchInput) -> CatalogSea
         conditions.append(f"dm > {inp.dm_min}")
     if inp.dm_max is not None:
         conditions.append(f"dm < {inp.dm_max}")
+    if inp.pb_min_s is not None:
+        conditions.append(f"pb > {inp.pb_min_s}")
+    if inp.pb_max_s is not None:
+        conditions.append(f"pb < {inp.pb_max_s}")
+    if inp.flux_min_mjy is not None:
+        conditions.append(f"s1400 > {inp.flux_min_mjy}")
+    if inp.gb_min is not None:
+        conditions.append(f"gb > {inp.gb_min}")
+    if inp.gb_max is not None:
+        conditions.append(f"gb < {inp.gb_max}")
+    # Explicitly requested columns plus any filter column, so records show why
+    # they matched (all verified single-token in `-o short`; see adapter)
+    columns = None
+    auto_extras = sorted({c for f, c in
+                          ((inp.pb_min_s, "pb"), (inp.pb_max_s, "pb"),
+                           (inp.flux_min_mjy, "s1400"),
+                           (inp.gb_min, "gb"), (inp.gb_max, "gb")) if f is not None})
+    if inp.fields or auto_extras:
+        columns = psa.resolve_columns(list(inp.fields or []) + auto_extras)
     # Fetch one extra row to build next_cursor.
-    argv = psa.catalog_search_cmd(binary, conditions=conditions)
+    argv = psa.catalog_search_cmd(binary, conditions=conditions, columns=columns)
     out = await _run_psrcat_async(ctx, argv)
     rows = []
     for line in out.splitlines():
@@ -196,7 +239,11 @@ async def _search_psrcat(ctx: AppContext, inp: CatalogSearchInput) -> CatalogSea
         if not line:
             continue
         try:
-            rows.append(psa.parse_psrcat_row(line))
+            if columns is not None:
+                row = psa.parse_psrcat_row_columns(line, columns)
+                rows.append({psa.PSRCAT_FIELD.get(c, c): v for c, v in row.items()})
+            else:
+                rows.append(psa.parse_psrcat_row(line))
         except ValueError:
             continue  # header/echo line
     records = [_record_from_row(r) for r in rows]
@@ -234,7 +281,7 @@ async def _search_psrqpy(ctx: AppContext, inp: CatalogSearchInput) -> CatalogSea
     def query() -> list[CatalogRecord]:
         import psrqpy
 
-        params = ["JNAME", "RAJ", "DECJ", "P0", "F0", "P1", "DM", "BINCOMP"]
+        params = ["JNAME", "RAJ", "DECJ", "P0", "F0", "P1", "DM", "BINCOMP", "PB", "S1400", "GB"]
         q = psrqpy.QueryATNF(params=params, loadfromdb=False).pandas
         records = []
         for _, row in q.iterrows():
@@ -260,10 +307,33 @@ async def _search_psrqpy(ctx: AppContext, inp: CatalogSearchInput) -> CatalogSea
                 continue
             if inp.dm_max is not None and dm >= inp.dm_max:
                 continue
+            pb = _opt_float(row.get("PB"))
+            if inp.pb_min_s is not None and (pb is None or pb <= inp.pb_min_s):
+                continue
+            if inp.pb_max_s is not None and (pb is None or pb >= inp.pb_max_s):
+                continue
+            s1400 = _opt_float(row.get("S1400"))
+            if inp.flux_min_mjy is not None and (s1400 is None or s1400 <= inp.flux_min_mjy):
+                continue
+            gb = _opt_float(row.get("GB"))
+            if inp.gb_min is not None and (gb is None or gb <= inp.gb_min):
+                continue
+            if inp.gb_max is not None and (gb is None or gb >= inp.gb_max):
+                continue
             bincomp = row.get("BINCOMP")
             is_binary = bincomp not in (None, "*", "0", "nan")
             if inp.binary_only and not is_binary:
                 continue
+            # Mirror the local path: matched filter columns ride along under
+            # extra_fields so records show why they matched
+            extras: dict[str, Any] = {}
+            if inp.pb_min_s is not None or inp.pb_max_s is not None:
+                if pb is not None:
+                    extras["pb"] = pb
+            if inp.flux_min_mjy is not None and s1400 is not None:
+                extras["s1400"] = s1400
+            if (inp.gb_min is not None or inp.gb_max is not None) and gb is not None:
+                extras["gb"] = gb
             records.append(CatalogRecord(
                 name=name,
                 ra_deg=ra_deg,
@@ -279,6 +349,7 @@ async def _search_psrqpy(ctx: AppContext, inp: CatalogSearchInput) -> CatalogSea
                 binary_model=None,
                 observatory=None,
                 catalog_version=getattr(psrqpy, "__version__", "atnf"),
+                extra_fields=extras,
             ))
         return records
 
@@ -297,6 +368,59 @@ async def _search_psrqpy(ctx: AppContext, inp: CatalogSearchInput) -> CatalogSea
         next_cursor=next_cursor,
         catalog=await _catalog_meta(ctx, CatalogMode.ONLINE),
         warnings=[WarningInfo(code="W_ONLINE_QUERY", message="results come from an ATNF online query (psrqpy)", severity="info")],
+    )
+
+
+# ---------------------------------------------------------------------------
+# catalog_query: raw `-l` power tool (local psrcat only)
+# ---------------------------------------------------------------------------
+
+async def _query(ctx: AppContext, inp: CatalogQueryInput, progress) -> CatalogSearchResult:  # noqa: ANN001
+    if not _use_psrcat(ctx):
+        raise env_missing(
+            "psrcat",
+            "catalog_query requires the local psrcat backend (psrcat not found or catalog.mode=online)",
+            hint="use catalog_search instead, or install psrcat via scripts/install_pulsar_stack.sh",
+        )
+    return await _query_psrcat(ctx, inp)
+
+
+async def _query_psrcat(ctx: AppContext, inp: CatalogQueryInput) -> CatalogSearchResult:
+    binary = ctx.backends.resolve("psrcat")
+    if binary is None:
+        raise env_missing("psrcat", "psrcat binary not found")
+    expression = psa.validate_expression(inp.expression)
+    columns = psa.resolve_columns(inp.columns) if inp.columns else None
+    argv = psa.catalog_query_cmd(binary, expression=expression, columns=columns)
+    out = await _run_psrcat_async(ctx, argv)
+    rows = []
+    for line in out.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            if columns is not None:
+                row = psa.parse_psrcat_row_columns(line, columns)
+                rows.append({psa.PSRCAT_FIELD.get(c, c): v for c, v in row.items()})
+            else:
+                rows.append(psa.parse_psrcat_row(line))
+        except ValueError:
+            continue  # header/echo line
+    records = [_record_from_row(r) for r in rows]
+    offset = 0
+    if inp.cursor:
+        try:
+            offset = int(inp.cursor)
+        except ValueError:
+            offset = 0
+    page = records[offset : offset + inp.limit]
+    next_cursor = str(offset + inp.limit) if offset + inp.limit < len(records) else None
+    return CatalogSearchResult(
+        records=page,
+        count=len(page),
+        next_cursor=next_cursor,
+        catalog=await _catalog_meta(ctx, CatalogMode.LOCAL),
+        warnings=[],
     )
 
 

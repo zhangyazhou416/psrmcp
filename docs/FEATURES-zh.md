@@ -2,7 +2,7 @@
 
 [English](FEATURES.md) | 简体中文
 
-psrmcp 把脉冲星射电天文的专业处理软件栈(**dspsr / PSRCHIVE / tempo2 / psrcat / PINT**)封装成 MCP 服务器,让 AI 助手(Claude Code、Claude Desktop 等)能直接、安全地驱动它们,完成从原始观测数据到计时分析报告的完整流程。AI 不需要记忆各软件的命令行 flag,而是调用 19 个面向任务的高层工具;所有结果结构化、可溯源。
+psrmcp 把脉冲星射电天文的专业处理软件栈(**dspsr / PSRCHIVE / tempo2 / psrcat / PINT**)封装成 MCP 服务器,让 AI 助手(Claude Code、Claude Desktop 等)能直接、安全地驱动它们,完成从原始观测数据到计时分析报告的完整流程。AI 不需要记忆各软件的命令行 flag,而是调用 20 个面向任务的高层工具;所有结果结构化、可溯源。
 
 设计原则:**面向任务、参数受控、结果结构化、全程可追溯**(架构见 [DESIGN.md](DESIGN.md),逐工具 Schema 见 [TOOLS.md](TOOLS.md))。
 
@@ -18,7 +18,7 @@ psrmcp 把脉冲星射电天文的专业处理软件栈(**dspsr / PSRCHIVE / tem
 
 后端缺失时服务器不崩溃:`pulsar_environment` 逐个报告 available/reason,依赖缺失后端的工具返回 `E_ENV_MISSING` 与提示。
 
-## 19 个工具(按处理链路分组)
+## 20 个工具(按处理链路分组)
 
 **环境与数据发现**
 
@@ -31,7 +31,8 @@ psrmcp 把脉冲星射电天文的专业处理软件栈(**dspsr / PSRCHIVE / tem
 
 | 工具 | 作用 |
 |---|---|
-| `catalog_search` | 按名字/条件(p0、DM 等)/位置半径查 ATNF 星表 |
+| `catalog_search` | 按名字/条件(p0、DM、轨道周期、流量、银纬等)/位置半径查 ATNF 星表;`fields` 可追加 psrcat 列 |
+| `catalog_query` | 高级查询:直接下发原始 psrcat `-l` 表达式(白名单列上的数值条件,如 `p0 < 0.005 && s1400 > 5`);仅本地 psrcat |
 | `catalog_get` | 取单颗脉冲星的完整参数行 |
 | `ephemeris_export` | 导出 TEMPO/TEMPO2 格式 par 星历(本地 psrcat `-e` 完整双星模型,支持字段覆盖) |
 
@@ -112,5 +113,5 @@ timing_diagnose      诊断:离群 TOA、是否需要 DMX/JUMP
 
 - [TUTORIAL.md](TUTORIAL.md) — 使用教程(从安装到完整处理链实战)
 - [DESIGN.md](DESIGN.md) — 架构与执行模型
-- [TOOLS.md](TOOLS.md) — 19 个工具的完整 JSON Schema 契约
+- [TOOLS.md](TOOLS.md) — 20 个工具的完整 JSON Schema 契约
 - [INSTALL.md](INSTALL.md) — 软件栈一键安装

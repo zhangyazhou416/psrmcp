@@ -335,7 +335,13 @@ The following `$defs` are referenced by all tool schemas. Implementations may ge
         "binary": {"type": "boolean"},
         "binary_model": {"type": ["string", "null"]},
         "observatory": {"type": ["string", "null"]},
-        "catalog_version": {"type": "string"}
+        "catalog_version": {"type": "string"},
+        "extra_fields": {
+          "type": "object",
+          "additionalProperties": true,
+          "default": {},
+          "description": "Additional psrcat columns requested via catalog_search.fields / catalog_query.columns, keyed by psrcat column name (age, bsurf, pb, s1400, gb, ...)"
+        }
       },
       "additionalProperties": false
     },
@@ -398,6 +404,7 @@ The following `$defs` are referenced by all tool schemas. Implementations may ge
 | `pulsar_environment` | true | false | true | false | no |
 | `data_find` | true | false | true | false | no |
 | `catalog_search` | true | false | true | true | no |
+| `catalog_query` | true | false | true | false | no |
 | `catalog_get` | true | false | true | true | no |
 | `ephemeris_export` | false | false | true | true | no |
 | `archive_inspect` | true | false | true | false | no |
@@ -419,7 +426,7 @@ Notes:
 
 - `idempotentHint` means identical inputs and parameters yield equivalent artifacts; artifact IDs may differ, but the content is cacheable and reusable
 - No tool **ever overwrites an input file**
-- `catalog_search` / `catalog_get` / `ephemeris_export` access the external catalogue in online mode, hence `openWorldHint: true`
+- `catalog_search` / `catalog_get` / `ephemeris_export` access the external catalogue in online mode, hence `openWorldHint: true`; `catalog_query` runs against the local psrcat only, hence `openWorldHint: false`
 - The future `artifact_delete` will be marked `destructiveHint: true`
 
 ---
@@ -644,7 +651,7 @@ Notes:
 
 ### 5.3 `catalog_search`
 
-**Purpose**: Queries the ATNF/psrcat catalogue. Supports filtering by name, positional cone, period, DM, and binarity. At least one filter must be given.
+**Purpose**: Queries the ATNF/psrcat catalogue. Supports filtering by name, positional cone, period, DM, orbital period, flux density, galactic latitude, and binarity. At least one filter must be given.
 
 **Backend**: psrcat / psrqpy / local cache  
 **Long-running**: no  
@@ -674,26 +681,16 @@ Notes:
     "p0_max_s": {"type": "number", "exclusiveMinimum": 0},
     "dm_min": {"type": "number", "minimum": 0},
     "dm_max": {"type": "number", "minimum": 0},
+    "pb_min_s": {"type": "number", "exclusiveMinimum": 0},
+    "pb_max_s": {"type": "number", "exclusiveMinimum": 0},
+    "flux_min_mjy": {"type": "number", "minimum": 0},
+    "gb_min": {"type": "number", "minimum": -90, "maximum": 90},
+    "gb_max": {"type": "number", "minimum": -90, "maximum": 90},
     "binary_only": {"type": "boolean", "default": false},
     "fields": {
       "type": "array",
-      "items": {
-        "enum": [
-          "name",
-          "aliases",
-          "ra_deg",
-          "dec_deg",
-          "p0_s",
-          "f0_hz",
-          "p1",
-          "dm",
-          "binary",
-          "binary_model",
-          "observatory",
-          "catalog_version"
-        ]
-      },
-      "maxItems": 12
+      "items": {"type": "string"},
+      "description": "Extra psrcat columns to return in each record's extra_fields: age bsurf edot dist s400 s1400 w50 w10 pb a1 ecc om gl gb"
     },
     "limit": {
       "type": "integer",
@@ -710,9 +707,14 @@ Notes:
 Semantic validation (beyond JSON Schema):
 
 - `radius_deg` must appear together with `ra_deg` and `dec_deg`
-- `p0_min_s <= p0_max_s`
-- `dm_min <= dm_max`
-- At least one of `name`, a position constraint, a period constraint, a DM constraint, or `binary_only=true` must be provided
+- `p0_min_s <= p0_max_s`, `dm_min <= dm_max`, `pb_min_s <= pb_max_s`, `gb_min <= gb_max`
+- `fields` accepts the default columns plus the whitelist above; unknown columns are rejected with `E_INVALID_INPUT`
+- At least one of `name`, a position constraint, a period/DM/orbital-period/flux/galactic-latitude constraint, or `binary_only=true` must be provided
+
+Notes:
+
+- flux filtering uses the `s1400` column (flux density at 1400 MHz, mJy); records lacking that column are excluded by flux/`pb` filters
+- `type` / binary-model string filters are intentionally not offered: catalogue values carry citation suffixes (e.g. `HE[bt93],HE[aaa+09f]`), so string equality does not match (verified empirically)
 
 #### Output Schema
 
@@ -746,7 +748,66 @@ Semantic validation (beyond JSON Schema):
 
 ---
 
-### 5.4 `catalog_get`
+### 5.4 `catalog_query`
+
+**Purpose**: Power-user escape hatch: runs a raw psrcat `-l` boolean expression against the local catalogue — numeric conditions on any whitelisted psrcat column, combinable with `&&` / `||`, e.g. `p0 < 0.005 && s1400 > 5`. Use it when the structured filters of `catalog_search` do not cover a parameter (e.g. `edot`, `w50`, `ecc`).
+
+**Backend**: local psrcat only (`E_ENV_MISSING` when psrcat is absent or `catalog.mode = "online"`)  
+**Long-running**: no  
+**Annotations**: `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### Input Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/catalog_query.input.json",
+  "type": "object",
+  "required": [
+    "expression"
+  ],
+  "properties": {
+    "expression": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 500,
+      "description": "Raw psrcat -l condition, e.g. 'p0 < 0.005 && s1400 > 5'. Numeric conditions on known psrcat columns only; unknown columns are rejected up front (psrcat exits silently on them)."
+    },
+    "columns": {
+      "type": "array",
+      "items": {"type": "string"},
+      "maxItems": 10,
+      "description": "psrcat columns to return (default: name raj decj p0 f0 p1 dm binary assoc)."
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200,
+      "default": 50
+    },
+    "cursor": {"type": "string"}
+  },
+  "additionalProperties": false
+}
+```
+
+Semantic validation (beyond JSON Schema):
+
+- `expression` must contain printable ASCII only (no control characters)
+- Every bare identifier in `expression` must be a known psrcat column (`name p0 f0 p1 dm binary assoc age bsurf edot dist s400 s1400 w50 w10 pb a1 ecc om gl gb`); unknown identifiers are rejected with `E_INVALID_INPUT` **before** execution, because psrcat exits 0 with no output for unknown `-l` parameters and a typo would otherwise silently look like an empty result (verified against psrcat 2.6.1)
+- String comparisons do not match in `-l`: catalogue values carry citation suffixes (e.g. `type` = `HE[bt93],HE[aaa+09f]`) and `name` equality is unsupported — use `catalog_search` for name/position lookups
+
+#### Output Schema
+
+Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `records` (each a `CatalogRecord`), `count`, `next_cursor`, `catalog`, `warnings`. Columns requested via `columns` beyond the defaults are returned under each record's `extra_fields`, keyed by psrcat column name.
+
+#### Error Codes
+
+`E_INVALID_INPUT`, `E_ENV_MISSING`
+
+---
+
+### 5.5 `catalog_get`
 
 **Purpose**: Fetches a single pulsar record by exact name and determines whether an ephemeris can be produced.
 
@@ -808,7 +869,7 @@ Semantic validation (beyond JSON Schema):
 
 ---
 
-### 5.5 `ephemeris_export`
+### 5.6 `ephemeris_export`
 
 **Purpose**: Produces a TEMPO/TEMPO2-format ephemeris from a catalogue record or an existing `.par` artifact. The conversion may lose information and must return warnings.
 
@@ -891,7 +952,7 @@ Semantic validation (beyond JSON Schema):
 
 ---
 
-### 5.6 `archive_inspect`
+### 5.7 `archive_inspect`
 
 **Purpose**: Reads PSRFITS/PSRARCHIVE metadata, dimensions, and basic statistics without modifying the file. Should be called before processing any data.
 
@@ -1042,7 +1103,7 @@ Semantic validation (beyond JSON Schema):
 
 ---
 
-### 5.7 `archive_convert`
+### 5.8 `archive_convert`
 
 **Purpose**: Converts between PSRFITS, PSRARCHIVE, SIGPROC, and ASCII. The input is left untouched; the output is a new artifact.
 
@@ -1102,7 +1163,7 @@ Semantic validation (beyond JSON Schema):
 
 ---
 
-### 5.8 `archive_merge`
+### 5.9 `archive_merge`
 
 **Purpose**: Merges multiple archives. Source names must agree by default; on mismatch returns `E_SOURCE_MISMATCH` unless the check is explicitly disabled.
 
@@ -1190,7 +1251,7 @@ Semantic validation (beyond JSON Schema):
 
 ---
 
-### 5.9 `dedisperse`
+### 5.10 `dedisperse`
 
 **Purpose**: Applies coherent or incoherent dedispersion and folds the data with dspsr. Coherent dedispersion requires a matching ephemeris.
 
@@ -1311,7 +1372,7 @@ Semantic validation (beyond JSON Schema):
 
 ---
 
-### 5.10 `rfi_scan`
+### 5.11 `rfi_scan`
 
 **Purpose**: Analyses per-channel statistics of an archive and produces a suggested bad-channel mask. Read-only; does not modify data.
 
@@ -1390,7 +1451,7 @@ Semantic validation (beyond JSON Schema):
 
 ---
 
-### 5.11 `rfi_zap`
+### 5.12 `rfi_zap`
 
 **Purpose**: Applies a channel mask to an archive, producing a new archive. Supports an explicit channel list or an automatic method.
 
@@ -1493,7 +1554,7 @@ Semantic validation (beyond JSON Schema):
 
 ---
 
-### 5.12 `profile_standardize`
+### 5.13 `profile_standardize`
 
 **Purpose**: Produces a standard profile from an archive for use in TOA extraction.
 
@@ -1556,7 +1617,7 @@ Semantic validation (beyond JSON Schema):
 
 ---
 
-### 5.13 `profile_measure`
+### 5.14 `profile_measure`
 
 **Purpose**: Measures profile metrics of an archive, such as S/N, FWHM, flux density, and polarization parameters. Read-only.
 
@@ -1645,7 +1706,7 @@ Semantic validation (beyond JSON Schema):
 
 ---
 
-### 5.14 `toa_extract`
+### 5.15 `toa_extract`
 
 **Purpose**: Extracts TOAs from an archive against a standard profile and produces a TEMPO `.tim` file.
 
@@ -1753,7 +1814,7 @@ Semantic validation:
 
 ---
 
-### 5.15 `timing_fit`
+### 5.16 `timing_fit`
 
 **Purpose**: Runs a timing fit on `.par` + `.tim` with PINT or tempo2, returning the updated `.par`, fit statistics, residuals, and residual plots.
 
@@ -1890,7 +1951,7 @@ Semantic validation:
 
 ---
 
-### 5.16 `timing_diagnose`
+### 5.17 `timing_diagnose`
 
 **Purpose**: Runs residual and model diagnostics on existing `.par` + `.tim` without refitting. Can check outliers, DM variations, JUMPs, and the residual distribution.
 
@@ -2009,7 +2070,7 @@ Semantic validation:
 
 ---
 
-### 5.17 `artifact_list`
+### 5.18 `artifact_list`
 
 **Purpose**: Lists artifacts in the current workspace, with paging by kind, time, and cursor.
 
@@ -2081,7 +2142,7 @@ Semantic validation:
 
 ---
 
-### 5.18 `job_get`
+### 5.19 `job_get`
 
 **Purpose**: Queries the status and result of an asynchronous job. Fallback used only when the client does not support the MCP Tasks extension.
 
@@ -2129,7 +2190,7 @@ Semantic validation:
 
 ---
 
-### 5.19 `job_cancel`
+### 5.20 `job_cancel`
 
 **Purpose**: Requests cancellation of an asynchronous job. Cancellation is cooperative: the server sends `SIGTERM` first, and `SIGKILL`s the process group if it is still running after the grace period.
 

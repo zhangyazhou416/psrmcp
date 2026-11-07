@@ -1,4 +1,4 @@
-"""dedisperse (TOOLS.md 5.9): dspsr folding with DM from ephemeris or override."""
+"""dedisperse (TOOLS.md 5.10): dspsr folding with DM from ephemeris or override."""
 
 from __future__ import annotations
 

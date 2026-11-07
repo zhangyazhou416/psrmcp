@@ -1,4 +1,4 @@
-"""Output models for all 19 tools (TOOLS.md section 5 output schemas)."""
+"""Output models for all 20 tools (TOOLS.md section 5 output schemas)."""
 
 from __future__ import annotations
 
@@ -113,7 +113,10 @@ class CatalogSearchResult(ToolResult):
     def summarize(self) -> str:
         lines = [f"{self.count} matching records (catalog v{self.catalog.version}, {self.catalog.mode.value})"]
         for r in self.records[:10]:
-            lines.append(f"- **{r.name}** P0={r.p0_s:.6f}s DM={r.dm:.2f} ({r.ra_deg:.3f}, {r.dec_deg:.3f})")
+            line = f"- **{r.name}** P0={r.p0_s:.6f}s DM={r.dm:.2f} ({r.ra_deg:.3f}, {r.dec_deg:.3f})"
+            if r.extra_fields:
+                line += " " + " ".join(f"{k}={v}" for k, v in r.extra_fields.items())
+            lines.append(line)
         if self.count > 10:
             lines.append(f"... and {self.count - 10} more")
         return "\n".join(lines)

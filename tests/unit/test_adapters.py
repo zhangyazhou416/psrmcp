@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import math
 
+import pytest
 
 from psrmcp.adapters import dspsr as dsp
 from psrmcp.adapters import psrcat as pc
 from psrmcp.adapters import psrchive as psa
 from psrmcp.adapters import tempo2 as t2a
+from psrmcp.errors import PsrmcpError
 
 
 # Real sample (PSRCHIVE 2026-10-16): header column is filename, keyword is nsub,
@@ -151,3 +153,59 @@ def test_psrcat_cmd_contract():
     search = pc.catalog_search_cmd("psrcat", conditions=["dm > 1"], )
     assert "-l" in search and "dm > 1" in search
     assert "-ra" not in search and "-binary" not in search and "-db" not in search
+
+
+def test_resolve_columns_whitelist_and_dedup():
+    # defaults stay first, requested extras are appended, duplicates collapse
+    cols = pc.resolve_columns(["pb", "gb", "name", "PB"])
+    assert cols[:9] == pc.PSRCAT_COLUMNS
+    assert cols[9:] == ["pb", "gb"]
+    with pytest.raises(PsrmcpError) as ei:
+        pc.resolve_columns(["nope"])
+    assert "unknown psrcat column" in str(ei.value)
+
+
+def test_validate_expression_accepts_known_columns():
+    out = pc.validate_expression("p0 < 0.005 && s1400 > 10")
+    assert out == "p0 < 0.005 && s1400 > 10"
+    # scientific notation: 'e3' after a digit is part of the number, not an identifier
+    pc.validate_expression("edot > 1e3")
+    # string literals are exempt
+    pc.validate_expression('assoc == "GRS:4FGL[aab+22]"')
+    # identifier followed by "(" passes through as a function call
+    pc.validate_expression("sqrt(edot) > 2")
+
+
+def test_validate_expression_rejects_bad_input():
+    # unknown column: psrcat exits 0 with no output on those, so we reject up front
+    with pytest.raises(PsrmcpError) as ei:
+        pc.validate_expression("bogus > 1")
+    assert "bogus" in str(ei.value)
+    with pytest.raises(PsrmcpError):
+        pc.validate_expression("p0 < 0.005\x01")  # control character
+    with pytest.raises(PsrmcpError):
+        pc.validate_expression("p0")  # below 3-char floor
+    with pytest.raises(PsrmcpError):
+        pc.validate_expression("p0 < " + "1" * 600)  # above 500-char ceiling
+
+
+def test_parse_psrcat_row_columns_generic():
+    cols = pc.resolve_columns(["s1400", "gb"])
+    # shape mirrors a real `-o short` row with two extras (J0034-0534-like)
+    row = pc.parse_psrcat_row_columns(
+        "7     B1937+21    19:39:38.5  -21:25:27  0.001558  641.928250 "
+        "1.05e-19  50.71  *  GRS:4FGL_J1937.4-2123[aab+22]  13.90  -21.26",
+        cols,
+    )
+    assert row["name"] == "B1937+21"
+    assert math.isclose(row["s1400"], 13.90, rel_tol=1e-9)
+    assert math.isclose(row["gb"], -21.26, rel_tol=1e-9)
+
+
+def test_catalog_query_cmd_contract():
+    argv = pc.catalog_query_cmd("psrcat", expression="p0 < 0.005 && s1400 > 10",
+                                columns=["name", "p0", "s1400"])
+    assert argv[:4] == ["psrcat", "-nohead", "-o", "short"]
+    i = argv.index("-l")
+    assert argv[i + 1] == "p0 < 0.005 && s1400 > 10"
+    assert "-db" not in argv

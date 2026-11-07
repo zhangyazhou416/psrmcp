@@ -18,9 +18,9 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "toolsmd"
 TOOL_NAMES = sorted(p.name.removesuffix(".input.json") for p in FIXTURES.glob("*.input.json"))
 
 
-def test_nineteen_tools_present(registry):
+def test_tool_count_matches_registry(registry):
     assert TOOL_NAMES == sorted(registry.names())
-    assert len(TOOL_NAMES) == 19
+    assert len(TOOL_NAMES) == 20
 
 
 def _fixture_schema(name: str) -> dict:
@@ -68,6 +68,7 @@ ANNOTATIONS_TABLE = [
     ("pulsar_environment", True, False, True, False, False),
     ("data_find", True, False, True, False, False),
     ("catalog_search", True, False, True, True, False),
+    ("catalog_query", True, False, True, False, False),
     ("catalog_get", True, False, True, True, False),
     ("ephemeris_export", False, False, True, True, False),
     ("archive_inspect", True, False, True, False, False),

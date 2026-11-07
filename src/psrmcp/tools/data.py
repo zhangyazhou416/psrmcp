@@ -109,6 +109,8 @@ async def run(ctx: AppContext, inp: DataFindInput, progress) -> DataFindResult: 
 
 def _detect_format(path: Path) -> str:
     suffix = path.suffix.lower()
+    if suffix == ".dada":
+        return "dada"
     if suffix == ".fil":
         return "sigproc"
     if suffix == ".par":
