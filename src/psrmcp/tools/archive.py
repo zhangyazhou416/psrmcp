@@ -1,4 +1,4 @@
-"""archive_inspect / archive_convert / archive_merge (TOOLS.md 5.6-5.8)."""
+"""archive_inspect / archive_convert / archive_merge (TOOLS.md 5.7-5.9)."""
 
 from __future__ import annotations
 

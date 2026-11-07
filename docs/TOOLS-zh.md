@@ -335,7 +335,13 @@ MCP `tools/call` 返回：
         "binary": {"type": "boolean"},
         "binary_model": {"type": ["string", "null"]},
         "observatory": {"type": ["string", "null"]},
-        "catalog_version": {"type": "string"}
+        "catalog_version": {"type": "string"},
+        "extra_fields": {
+          "type": "object",
+          "additionalProperties": true,
+          "default": {},
+          "description": "通过 catalog_search.fields / catalog_query.columns 请求的额外 psrcat 列，键为 psrcat 列名（age、bsurf、pb、s1400、gb 等）"
+        }
       },
       "additionalProperties": false
     },
@@ -398,6 +404,7 @@ MCP `tools/call` 返回：
 | `pulsar_environment` | true | false | true | false | 否 |
 | `data_find` | true | false | true | false | 否 |
 | `catalog_search` | true | false | true | true | 否 |
+| `catalog_query` | true | false | true | false | 否 |
 | `catalog_get` | true | false | true | true | 否 |
 | `ephemeris_export` | false | false | true | true | 否 |
 | `archive_inspect` | true | false | true | false | 否 |
@@ -419,7 +426,7 @@ MCP `tools/call` 返回：
 
 - `idempotentHint` 表示相同输入和参数会得到等价产物；产物 ID 可能不同，但内容可缓存复用
 - 所有工具都**不会覆盖输入文件**
-- `catalog_search` / `catalog_get` / `ephemeris_export` 在 online 模式下会访问外部星表，因此标记 `openWorldHint: true`
+- `catalog_search` / `catalog_get` / `ephemeris_export` 在 online 模式下会访问外部星表，因此标记 `openWorldHint: true`；`catalog_query` 只访问本地 psrcat，因此标记 `openWorldHint: false`
 - 未来 `artifact_delete` 将标记 `destructiveHint: true`
 
 ---
@@ -644,7 +651,7 @@ MCP `tools/call` 返回：
 
 ### 5.3 `catalog_search`
 
-**用途**：查询 ATNF/psrcat 星表。支持名称、位置锥、周期、DM 和双星筛选。至少提供一个筛选条件。
+**用途**：查询 ATNF/psrcat 星表。支持名称、位置锥、周期、DM、轨道周期、流量密度、银纬和双星筛选。至少提供一个筛选条件。
 
 **后端**：psrcat / psrqpy / 本地缓存  
 **长任务**：否  
@@ -674,26 +681,16 @@ MCP `tools/call` 返回：
     "p0_max_s": {"type": "number", "exclusiveMinimum": 0},
     "dm_min": {"type": "number", "minimum": 0},
     "dm_max": {"type": "number", "minimum": 0},
+    "pb_min_s": {"type": "number", "exclusiveMinimum": 0},
+    "pb_max_s": {"type": "number", "exclusiveMinimum": 0},
+    "flux_min_mjy": {"type": "number", "minimum": 0},
+    "gb_min": {"type": "number", "minimum": -90, "maximum": 90},
+    "gb_max": {"type": "number", "minimum": -90, "maximum": 90},
     "binary_only": {"type": "boolean", "default": false},
     "fields": {
       "type": "array",
-      "items": {
-        "enum": [
-          "name",
-          "aliases",
-          "ra_deg",
-          "dec_deg",
-          "p0_s",
-          "f0_hz",
-          "p1",
-          "dm",
-          "binary",
-          "binary_model",
-          "observatory",
-          "catalog_version"
-        ]
-      },
-      "maxItems": 12
+      "items": {"type": "string"},
+      "description": "要以 extra_fields 返回的额外 psrcat 列：age bsurf edot dist s400 s1400 w50 w10 pb a1 ecc om gl gb"
     },
     "limit": {
       "type": "integer",
@@ -710,9 +707,14 @@ MCP `tools/call` 返回：
 语义校验（在 JSON Schema 之外）：
 
 - `radius_deg` 必须与 `ra_deg`、`dec_deg` 同时出现
-- `p0_min_s <= p0_max_s`
-- `dm_min <= dm_max`
-- 至少提供 `name`、位置条件、周期条件、DM 条件或 `binary_only=true` 之一
+- `p0_min_s <= p0_max_s`、`dm_min <= dm_max`、`pb_min_s <= pb_max_s`、`gb_min <= gb_max`
+- `fields` 接受默认列加上白名单中的额外列；未知列以 `E_INVALID_INPUT` 拒绝
+- 至少提供 `name`、位置条件、周期/DM/轨道周期/流量/银纬条件或 `binary_only=true` 之一
+
+说明：
+
+- 流量筛选使用 `s1400` 列（1400 MHz 流量密度，mJy）；缺少该列的记录会被流量/`pb` 筛选排除
+- 不提供 `type` / 双星模型的字符串筛选：星表取值带引用后缀（如 `HE[bt93],HE[aaa+09f]`），字符串等值无法匹配（已经实测验证）
 
 #### 输出 Schema
 
@@ -746,7 +748,66 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.4 `catalog_get`
+### 5.4 `catalog_query`
+
+**用途**：面向高级用户的逃生舱：把原始 psrcat `-l` 布尔表达式直接下发给本地星表——对白名单内的任意 psrcat 列做数值条件筛选，可用 `&&` / `||` 组合，例如 `p0 < 0.005 && s1400 > 5`。当 `catalog_search` 的结构化筛选未覆盖某个参数（如 `edot`、`w50`、`ecc`）时使用。
+
+**后端**：仅本地 psrcat（psrcat 缺失或 `catalog.mode = "online"` 时返回 `E_ENV_MISSING`）  
+**长任务**：否  
+**Annotations**：`readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### 输入 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/catalog_query.input.json",
+  "type": "object",
+  "required": [
+    "expression"
+  ],
+  "properties": {
+    "expression": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 500,
+      "description": "原始 psrcat -l 条件，例如 'p0 < 0.005 && s1400 > 5'。仅支持已知 psrcat 列上的数值条件；未知列会被预先拒绝（psrcat 对未知参数静默返回空）。"
+    },
+    "columns": {
+      "type": "array",
+      "items": {"type": "string"},
+      "maxItems": 10,
+      "description": "返回的 psrcat 列（默认：name raj decj p0 f0 p1 dm binary assoc）。"
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200,
+      "default": 50
+    },
+    "cursor": {"type": "string"}
+  },
+  "additionalProperties": false
+}
+```
+
+语义校验（在 JSON Schema 之外）：
+
+- `expression` 只能包含可打印 ASCII（不允许控制字符）
+- `expression` 中每个裸标识符必须是已知 psrcat 列（`name p0 f0 p1 dm binary assoc age bsurf edot dist s400 s1400 w50 w10 pb a1 ecc om gl gb`）；未知标识符在**执行前**以 `E_INVALID_INPUT` 拒绝，因为 psrcat 对未知 `-l` 参数会以退出码 0 且无任何输出结束，笔误否则会静默表现为“空结果”（已对 psrcat 2.6.1 实测验证）
+- `-l` 中的字符串比较无法匹配：星表取值带引用后缀（如 `type` = `HE[bt93],HE[aaa+09f]`），且 `name` 等值比较不受支持——名称/位置查找请用 `catalog_search`
+
+#### 输出 Schema
+
+与 `catalog_search`（§5.3）相同的信封：`CatalogSearchResult`，含 `records`（每条为 `CatalogRecord`）、`count`、`next_cursor`、`catalog`、`warnings`。通过 `columns` 请求的超出默认的列放在每条记录的 `extra_fields` 中，键为 psrcat 列名。
+
+#### 错误码
+
+`E_INVALID_INPUT`, `E_ENV_MISSING`
+
+---
+
+### 5.5 `catalog_get`
 
 **用途**：按名称精确获取单个脉冲星记录，并判断是否可以生成 ephemeris。
 
@@ -808,7 +869,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.5 `ephemeris_export`
+### 5.6 `ephemeris_export`
 
 **用途**：从星表记录或已有 `.par` 产物生成 TEMPO/TEMPO2 格式 ephemeris。转换可能丢失信息，必须返回 warnings。
 
@@ -891,7 +952,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.6 `archive_inspect`
+### 5.7 `archive_inspect`
 
 **用途**：读取 PSRFITS/PSRARCHIVE 的元数据、维度和基本统计，不修改文件。处理任何数据前应先调用。
 
@@ -1042,7 +1103,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.7 `archive_convert`
+### 5.8 `archive_convert`
 
 **用途**：在 PSRFITS、PSRARCHIVE、SIGPROC、ASCII 之间转换。输入保持不变，输出为新 artifact。
 
@@ -1102,7 +1163,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.8 `archive_merge`
+### 5.9 `archive_merge`
 
 **用途**：合并多个 archive。默认要求源名一致；不一致时返回 `E_SOURCE_MISMATCH`，除非显式关闭检查。
 
@@ -1190,7 +1251,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.9 `dedisperse`
+### 5.10 `dedisperse`
 
 **用途**：使用 dspsr 对数据进行相干或非相干消色散并折叠。相干消色散需要匹配的 ephemeris。
 
@@ -1311,7 +1372,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.10 `rfi_scan`
+### 5.11 `rfi_scan`
 
 **用途**：分析 archive 的通道统计，给出建议的坏通道掩膜。只读，不修改数据。
 
@@ -1390,7 +1451,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.11 `rfi_zap`
+### 5.12 `rfi_zap`
 
 **用途**：对 archive 应用通道掩膜，生成新的 archive。支持显式通道列表或自动方法。
 
@@ -1493,7 +1554,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.12 `profile_standardize`
+### 5.13 `profile_standardize`
 
 **用途**：从 archive 生成标准轮廓，供 TOA 提取使用。
 
@@ -1556,7 +1617,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.13 `profile_measure`
+### 5.14 `profile_measure`
 
 **用途**：测量 archive 的轮廓指标，例如 S/N、FWHM、流量和偏振参数。只读。
 
@@ -1645,7 +1706,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.14 `toa_extract`
+### 5.15 `toa_extract`
 
 **用途**：使用标准轮廓从 archive 提取 TOA，生成 TEMPO `.tim` 文件。
 
@@ -1753,7 +1814,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.15 `timing_fit`
+### 5.16 `timing_fit`
 
 **用途**：使用 PINT 或 tempo2 对 `.par` + `.tim` 做计时拟合，返回更新后的 `.par`、拟合统计、残差和残差图。
 
@@ -1890,7 +1951,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.16 `timing_diagnose`
+### 5.17 `timing_diagnose`
 
 **用途**：对已有 `.par` + `.tim` 做残差和模型诊断，不重新拟合。可检查离群点、DM 变化、JUMP 和残差分布。
 
@@ -2009,7 +2070,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.17 `artifact_list`
+### 5.18 `artifact_list`
 
 **用途**：列出当前工作区的 artifact，支持按类型、时间和游标分页。
 
@@ -2081,7 +2142,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.18 `job_get`
+### 5.19 `job_get`
 
 **用途**：查询异步任务状态和结果。仅在客户端不支持 MCP Tasks 扩展时作为兜底使用。
 
@@ -2129,7 +2190,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.19 `job_cancel`
+### 5.20 `job_cancel`
 
 **用途**：请求取消异步任务。取消是协作式的：服务器先发送 `SIGTERM`，宽限期后如仍运行则 `SIGKILL` 进程组。
 

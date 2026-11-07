@@ -28,7 +28,7 @@ def test_init_config_writes_loadable_template(tmp_path):
     assert rc2.returncode == 1
 
 
-def test_build_registry_yields_nineteen(tmp_path):
+def test_build_registry_yields_twenty(tmp_path):
     from pathlib import Path
 
     from psrmcp._context import build_context
@@ -39,7 +39,7 @@ def test_build_registry_yields_nineteen(tmp_path):
     cfg.server.workspace = tmp_path / "ws"
     ctx = build_context(cfg)
     reg = build_registry(ctx)
-    assert len(reg.names()) == 19
+    assert len(reg.names()) == 20
 
     server = create_server(cfg)
     assert server.pulsar_registry is not None

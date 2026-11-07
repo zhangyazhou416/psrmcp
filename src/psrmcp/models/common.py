@@ -130,6 +130,9 @@ class CatalogRecord(BaseModel):
     binary_model: str | None = None
     observatory: str | None = None
     catalog_version: str
+    # Additional psrcat columns requested via fields/catalog_query.columns,
+    # keyed by the psrcat column name (age, bsurf, pb, s1400, gb, ...)
+    extra_fields: dict[str, Any] = Field(default_factory=dict)
 
 
 class CatalogMode(StrEnum):

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/catalog_query.input.json",
+  "type": "object",
+  "required": [
+    "expression"
+  ],
+  "properties": {
+    "expression": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 500,
+      "description": "Raw psrcat -l condition, e.g. 'p0 < 0.005 && s1400 > 5'. Numeric conditions on known psrcat columns only; unknown columns are rejected up front (psrcat exits silently on them)."
+    },
+    "columns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10,
+      "description": "psrcat columns to return (default: name raj decj p0 f0 p1 dm binary assoc)."
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200,
+      "default": 50
+    },
+    "cursor": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

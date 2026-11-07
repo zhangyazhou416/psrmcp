@@ -2,7 +2,7 @@
 
 English | [简体中文](FEATURES-zh.md)
 
-psrmcp wraps the professional pulsar radio-astronomy processing stack (**dspsr / PSRCHIVE / tempo2 / psrcat / PINT**) as an MCP server, so AI assistants (Claude Code, Claude Desktop, etc.) can drive them directly and safely, covering the full pipeline from raw observation data to timing analysis reports. The AI does not need to memorize each package's command-line flags; instead it calls 19 task-oriented high-level tools, and every result is structured and traceable.
+psrmcp wraps the professional pulsar radio-astronomy processing stack (**dspsr / PSRCHIVE / tempo2 / psrcat / PINT**) as an MCP server, so AI assistants (Claude Code, Claude Desktop, etc.) can drive them directly and safely, covering the full pipeline from raw observation data to timing analysis reports. The AI does not need to memorize each package's command-line flags; instead it calls 20 task-oriented high-level tools, and every result is structured and traceable.
 
 Design principles: **task-oriented, controlled parameters, structured results, full traceability** (architecture in [DESIGN.md](DESIGN.md), per-tool schemas in [TOOLS.md](TOOLS.md)).
 
@@ -18,7 +18,7 @@ Design principles: **task-oriented, controlled parameters, structured results, f
 
 Missing backends do not crash the server: `pulsar_environment` reports available/reason for each one, and tools that depend on a missing backend return `E_ENV_MISSING` with a hint.
 
-## The 19 tools (grouped by processing pipeline)
+## The 20 tools (grouped by processing pipeline)
 
 **Environment and data discovery**
 
@@ -31,7 +31,8 @@ Missing backends do not crash the server: `pulsar_environment` reports available
 
 | Tool | Purpose |
 |---|---|
-| `catalog_search` | query the ATNF catalogue by name, by criteria (p0, DM, etc.), or by positional radius |
+| `catalog_search` | query the ATNF catalogue by name, by criteria (p0, DM, orbital period, flux, galactic latitude), or by positional radius; extra psrcat columns via `fields` |
+| `catalog_query` | power query with a raw psrcat `-l` expression (numeric conditions on any whitelisted column, e.g. `p0 < 0.005 && s1400 > 5`); local psrcat only |
 | `catalog_get` | fetch the full parameter row for a single pulsar |
 | `ephemeris_export` | export a TEMPO/TEMPO2-format par ephemeris (full binary model via local psrcat `-e`, with field overrides supported) |
 
@@ -112,5 +113,5 @@ The artifacts of every step (archives, .tim/.par, plots, logs) carry provenance 
 
 - [TUTORIAL.md](TUTORIAL.md) — usage tutorial (from installation to a full processing-chain walkthrough)
 - [DESIGN.md](DESIGN.md) — architecture and execution model
-- [TOOLS.md](TOOLS.md) — complete JSON Schema contracts for all 19 tools
+- [TOOLS.md](TOOLS.md) — complete JSON Schema contracts for all 20 tools
 - [INSTALL.md](INSTALL.md) — one-click installation of the software stack

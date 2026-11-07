@@ -1,16 +1,16 @@
 # psrmcp
 
-English | [简体中文](README.zh-CN.md)
+English | [简体中文](https://github.com/zhangyazhou416/psrmcp/blob/main/README.zh-CN.md)
 
 An MCP (Model Context Protocol) server wrapping the pulsar astronomy software stack (dspsr / psrchive / tempo2 / psrcat / PINT): task-oriented tools, controlled parameters, structured results, and full provenance.
 
 Repositories: <https://gitlab.com/zhangyazhou416/psrmcp> · <https://github.com/zhangyazhou416/psrmcp>
 
-- Overview: [docs/FEATURES.md](docs/FEATURES.md) (what it does, all 19 tools)
-- Tutorial: [docs/TUTORIAL.md](docs/TUTORIAL.md) (setup, MCP clients, a full processing-chain walkthrough)
-- Design: [docs/DESIGN.md](docs/DESIGN.md)
-- Tool contracts: [docs/TOOLS.md](docs/TOOLS.md) (input/output schemas for all 19 tools)
-- One-click software stack installer: [scripts/install_pulsar_stack.sh](scripts/install_pulsar_stack.sh) (builds everything into `~/.pulsar`, see [docs/INSTALL.md](docs/INSTALL.md))
+- Overview: [docs/FEATURES.md](https://github.com/zhangyazhou416/psrmcp/blob/main/docs/FEATURES.md) (what it does, all 20 tools)
+- Tutorial: [docs/TUTORIAL.md](https://github.com/zhangyazhou416/psrmcp/blob/main/docs/TUTORIAL.md) (setup, MCP clients, a full processing-chain walkthrough)
+- Design: [docs/DESIGN.md](https://github.com/zhangyazhou416/psrmcp/blob/main/docs/DESIGN.md)
+- Tool contracts: [docs/TOOLS.md](https://github.com/zhangyazhou416/psrmcp/blob/main/docs/TOOLS.md) (input/output schemas for all 20 tools)
+- One-click software stack installer: [scripts/install_pulsar_stack.sh](https://github.com/zhangyazhou416/psrmcp/blob/main/scripts/install_pulsar_stack.sh) (builds everything into `~/.pulsar`, see [docs/INSTALL.md](https://github.com/zhangyazhou416/psrmcp/blob/main/docs/INSTALL.md))
 - Chinese versions of all five docs live alongside as `docs/*-zh.md`
 
 ## Why psrmcp?
@@ -25,7 +25,7 @@ Same question — *"How many pulsars have P < 5 ms and DM > 200 pc cm⁻³?"* �
 
 | General LLM (web search) | Claude Code + psrmcp |
 |:---:|:---:|
-| <img src="docs/images/query-deepseek.png" alt="DeepSeek: cannot give an exact number, suggests querying ATNF yourself" width="400"/> | <img src="docs/images/query-psrmcp.png" alt="psrmcp: 54 pulsars, with population breakdown and extremes" width="430"/> |
+| <img src="https://raw.githubusercontent.com/zhangyazhou416/psrmcp/main/docs/images/query-deepseek.png" alt="DeepSeek: cannot give an exact number, suggests querying ATNF yourself" width="400"/> | <img src="https://raw.githubusercontent.com/zhangyazhou416/psrmcp/main/docs/images/query-psrmcp.png" alt="psrmcp: 54 pulsars, with population breakdown and extremes" width="430"/> |
 
 The difference is not model intelligence — it is **where the answer comes from**: recalled from training data (frozen, unverifiable, wrong for anything off the beaten track) versus computed from the live catalogue through a contract-tested tool, with the domain CLI knowledge (flags, column names, file formats) already encoded.
 
@@ -83,7 +83,7 @@ PSRMCP_CONTRACT=1 uv run pytest tests/contract    # contract tests (needs the in
 
 ## Publishing to PyPI
 
-Automatic via CI (PyPI Trusted Publishing / OIDC — no long-lived tokens): [.github/workflows/publish.yml](.github/workflows/publish.yml) is the primary channel, [.gitlab-ci.yml](.gitlab-ci.yml) kept as a fallback.
+Automatic via CI (PyPI Trusted Publishing / OIDC — no long-lived tokens): [.github/workflows/publish.yml](https://github.com/zhangyazhou416/psrmcp/blob/main/.github/workflows/publish.yml) is the primary channel, [.gitlab-ci.yml](https://github.com/zhangyazhou416/psrmcp/blob/main/.gitlab-ci.yml) kept as a fallback.
 
 ```bash
 git tag v0.1.0 && git push origin v0.1.0    # a tag triggers build & upload (keep tag in sync with version)
@@ -97,4 +97,4 @@ v0.1.0 — MVP (Phase 0–2): environment introspection, data discovery, catalog
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/zhangyazhou416/psrmcp/blob/main/LICENSE)
