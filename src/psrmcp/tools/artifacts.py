@@ -1,4 +1,4 @@
-"""artifact_list / job_get / job_cancel (TOOLS.md 5.18-5.20)."""
+"""artifact_list / job_get / job_cancel (TOOLS.md 5.25-5.27)."""
 
 from __future__ import annotations
 

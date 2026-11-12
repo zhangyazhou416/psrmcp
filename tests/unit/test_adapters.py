@@ -251,7 +251,7 @@ Best signal-to-noise ratio = 154.3
 
 def test_psredit_cmd_contracts():
     assert psa.psredit_get_cmd("psredit", "obs.ar", ["name", "dm"]) == \
-        ["psredit", "-qc", "-c", "name,dm", "obs.ar"]
+        ["psredit", "-q", "-c", "name,dm", "obs.ar"]
     argv = psa.psredit_set_cmd("psredit", "obs.ar", {"name": "J0437-4715", "dm": "2.644"})
     assert argv == ["psredit", "-c", "name=J0437-4715,dm=2.644", "-e", "edit", "obs.ar"]
 
@@ -374,3 +374,120 @@ Best RM is: 2.6441 +/- 0.05
     out = psa.parse_rmfit("rmfit: failed to fit for best RM.\nBest RM is: 2.6\n")
     assert out["best_rm"] == 2.6 and "best_rm_error" not in out
     assert psa.parse_rmfit("nothing useful here\n") == {}
+
+
+def test_pac_database_cmd_contract():
+    argv = psa.pac_database_cmd("pac", "/j/cals", "/j/database.txt", ["ar"])
+    assert argv == ["pac", "-w", "-p", "/j/cals", "-k", "/j/database.txt", "-u", "ar"]
+    # -u takes ONE space-separated argument with every extension
+    argv = psa.pac_database_cmd("pac", "/j/cals", "/j/database.txt", ["ar", "fits"])
+    assert argv[argv.index("-u") + 1] == "ar fits"
+    # no extensions -> no -u
+    argv = psa.pac_database_cmd("pac", "/j/cals", "/j/database.txt", [])
+    assert "-u" not in argv
+
+
+def test_pac_calibrate_cmd_contract():
+    argv = psa.pac_calibrate_cmd(
+        "pac", "obs.ar", cals_dir="/j/cals", model_type="polar",
+        flux_calibration=False, match_time=False, match_coordinates=False,
+        match_instrument=False, match_frequency=False, match_bandwidth=False,
+        allow_opposite_sideband=True, match_sequence="before",
+        per_channel_matching=True, fscrunch_to_cal=True, gain_normalize=True,
+    )
+    assert argv[0] == "pac" and argv[argv.index("-p") + 1] == "/j/cals"
+    assert "-s" in argv and "-P" in argv
+    for flag in ("-T", "-c", "-Z", "-F", "-b", "-o", "-a", "-g", "-G"):
+        assert flag in argv, flag
+    assert argv[argv.index("-m") + 1] == "b"
+    assert argv[argv.index("-e") + 1] == "calib"
+    assert argv[-1] == "obs.ar"
+    # model mode (-A) + reception model (-S); no -p
+    argv = psa.pac_calibrate_cmd("pac", "obs.ar", model_file="sol.pcal", model_type="reception")
+    assert argv[argv.index("-A") + 1] == "sol.pcal" and "-S" in argv
+    assert "-p" not in argv
+    # match_sequence="after"
+    argv = psa.pac_calibrate_cmd("pac", "obs.ar", cals_dir="c", match_sequence="after")
+    assert argv[argv.index("-m") + 1] == "a"
+    # bare minimum: defaults mean no flags at all except -e
+    assert psa.pac_calibrate_cmd("pac", "obs.ar", cals_dir="c") == \
+        ["pac", "-p", "c", "-e", "calib", "obs.ar"]
+
+
+def test_parse_pac_output():
+    sample = """\
+pac: Generating new calibrator database
+pac: Loaded archive pac_src.ar
+
+pac: PolnCalibrator constructed from:
+	HydraA.pcal
+pac: Mean SEFD = 42.5 Jy
+pac: FluxCalibrator constructed from:
+	HydraA.fcal
+	HydraB.fcal
+pac: Poln calibration complete
+pac: Flux calibration complete
+pac: Calibrated archive pac_src.calib unloaded
+
+pac: Finished all files
+"""
+    out = psa.parse_pac(sample)
+    assert out["poln_calibrator_from"] == "HydraA.pcal"
+    assert out["flux_calibrator_from"] == "HydraA.fcal; HydraB.fcal"
+    assert out["mean_sefd_jy"] == 42.5
+    assert out["poln_complete"] and out["flux_complete"]
+    assert out["unloaded"] == ["pac_src.calib"]
+    assert not out["already_poln"] and not out["no_flux_db"]
+
+    err = psa.parse_pac(
+        "pac: Loaded archive pac_src.ar\n"
+        "pac: Could not flux calibrate pac_src.ar\n"
+        "\tno matching flux calibrator found\n"
+        " -- closest match: \n"
+        "\treceiver=H-OH no match \n"
+        "pac: Calibrated archive pac_src.calibP unloaded\n"
+    )
+    assert err["fluxcal_error"].startswith("pac_src.ar; no matching flux calibrator found")
+    assert err["unloaded"] == ["pac_src.calibP"]
+    assert err["flux_complete"] is False
+
+    fail = psa.parse_pac(
+        "pac: Error while handling pac_src.ar:\n"
+        "\tError::InvalidState\n"
+        "\tno CAL info in archive\n"
+    )
+    assert fail["handling_error"] == "pac_src.ar; Error::InvalidState; no CAL info in archive"
+
+    skip = psa.parse_pac(
+        "pac: pac_src.ar already poln calibrated\n"
+        "pac: Not performing flux calibration (no database).\n"
+        "pac: Calibrated archive pac_src.calibP unloaded\n"
+    )
+    assert skip["already_poln"] and skip["no_flux_db"]
+
+    empty = psa.parse_pac("")
+    assert empty["poln_calibrator_from"] is None and empty["unloaded"] == []
+
+
+def test_parse_dbase_entries():
+    sample = (
+        "Pulsar::Database::path /tmp/x/cals\n"
+        "Pulsar::Database # of entries = 3\n"
+        "HydraA.pcal PolnCal 08:54:37.9648 -42:16:39.72 58765.123456789012 "
+        "32 1380.5 512 cpsr2n H-OH\n"
+        "sub/HydraB.fcal FluxCal-On 08:54:37.9648 -42:16:39.72 58765.5 "
+        "32 1380.5 512 cpsr2n H-OH\n"
+        "int.pfit Interpolator 12:00:00 -30:00:00 58765.1234-58766.1234 "
+        "16 1400 cpsr2n H-OH\n"
+        "garbage line that cannot parse\n"
+    )
+    entries = psa.parse_dbase_entries(sample)
+    assert len(entries) == 3
+    assert entries[0]["filename"] == "HydraA.pcal" and entries[0]["obs_type"] == "PolnCal"
+    assert entries[0]["nchan"] == 512 and entries[0]["bandwidth_mhz"] == 32.0
+    assert entries[0]["freq_mhz"] == 1380.5 and entries[0]["receiver"] == "H-OH"
+    # subdirectory prefixes survive in the relative filename
+    assert entries[1]["filename"] == "sub/HydraB.fcal"
+    # interpolator entries carry an MJD range and no nchan
+    assert entries[2]["nchan"] is None and "-" in entries[2]["mjd"]
+    assert psa.parse_dbase_entries("Pulsar::Database # of entries = 0\n") == []

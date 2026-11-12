@@ -466,3 +466,174 @@ async def test_rotation_measure_fit_unparsed_output_warns(ctx, registry, tmp_pat
     body = out.structured_content
     assert body["best_rm"] is None
     assert [w["code"] for w in body["warnings"]] == ["W_RMFIT_UNPARSED"]
+
+
+# ---------------------------------------------------------------------------
+# polarization_calibrate / calibrator_database (scripted backends)
+# ---------------------------------------------------------------------------
+
+_PAC_CAL_SAMPLE = (
+    "pac: Generating new calibrator database\n"
+    "\n"
+    "pac: PolnCalibrator constructed from:\n"
+    "\thydra.pcal\n"
+    "pac: Mean SEFD = 42.5 Jy\n"
+    "pac: FluxCalibrator constructed from:\n"
+    "\thydra.fcal\n"
+    "pac: Poln calibration complete\n"
+    "pac: Flux calibration complete\n"
+    "pac: Calibrated archive pac_src.calib unloaded\n"
+    "\npac: Finished all files\n"
+)
+_PAC_MODEL_SAMPLE = (
+    "pac: Loading calibrator from sol.pcal\n"
+    "pac: Applying specified calibrator\n"
+    "pac: Poln calibration complete\n"
+    "pac: Not performing flux calibration (no database).\n"
+    "pac: Calibrated archive pac_src.calib unloaded\n"
+    "\npac: Finished all files\n"
+)
+_PAC_FAIL_SAMPLE = (
+    "pac: Error while handling pac_src.ar:\n"
+    "\tError::InvalidState\n"
+    "\tno CAL info in archive\n"
+    "\npac: Finished all files\n"
+)
+_PACDB_SAMPLE = (
+    "Pulsar::Database::path cals\n"
+    "Pulsar::Database # of entries = 2\n"
+    "hydra.pcal PolnCal 08:54:37.96 -42:16:39.72 58765.123456789012 "
+    "32 1380.5 512 cpsr2n H-OH\n"
+    "hydra.fcal FluxCal-On 08:54:37.96 -42:16:39.72 58765.5 "
+    "32 1380.5 512 cpsr2n H-OH\n"
+)
+
+
+def _pac_produce(name, cwd):
+    if name == "pac" and cwd:
+        (cwd / "pac_src.calib").write_bytes(b"fake")
+
+
+async def test_polarization_calibrate_parses_and_commits(ctx, registry, tmp_path, monkeypatch):
+    data = _archive_env(ctx, tmp_path)
+    (data / "hydra.pcal").write_bytes(b"fake")
+    (data / "hydra.fcal").write_bytes(b"fake")
+    monkeypatch.setattr("psrmcp.tools.calibration._psrchive_tool", lambda c, n: f"/fake/{n}")
+    runner = _ScriptedRunner({"pac": (0, _PAC_CAL_SAMPLE, "")}, produce=_pac_produce)
+    ctx.runner = runner
+
+    out = await registry.dispatch(
+        "polarization_calibrate",
+        {"archive": "obs.ar", "calibrators": ["hydra.pcal", "hydra.fcal"],
+         "execution_mode": "sync"},
+    )
+    assert out.is_error is False, out.structured_content
+    body = out.structured_content
+    assert body["calibrated_archive"]["artifact_id"].startswith("art_")
+    assert body["poln_calibrated"] is True and body["flux_calibrated"] is True
+    assert body["poln_calibrator_source"] == "hydra.pcal"
+    assert body["mean_sefd_jy"] == 42.5
+    assert body["warnings"] == []
+    argv = [c for c in runner.calls if c[0] == "/fake/pac"][0]
+    assert argv[argv.index("-p") + 1].endswith("cals")
+    # every supplied extension is added to pac's scan set via -u
+    assert argv[argv.index("-u") + 1] == "pcal fcal"
+    assert "-T" not in argv and "-Z" not in argv  # defaults keep pac's criteria
+
+    # exactly one calibration source is required -> E_INVALID_INPUT
+    out = await registry.dispatch(
+        "polarization_calibrate",
+        {"archive": "obs.ar", "calibrators": ["hydra.pcal"], "model": "sol.pcal",
+         "execution_mode": "sync"},
+    )
+    assert out.is_error is True
+    assert out.structured_content["error"]["code"] == ErrorCode.INVALID_INPUT.value
+    out = await registry.dispatch(
+        "polarization_calibrate", {"archive": "obs.ar", "execution_mode": "sync"}
+    )
+    assert out.is_error is True
+
+
+async def test_polarization_calibrate_model_mode_warns_no_fluxdb(ctx, registry, tmp_path, monkeypatch):
+    data = _archive_env(ctx, tmp_path)
+    (data / "sol.pcal").write_bytes(b"fake")
+    monkeypatch.setattr("psrmcp.tools.calibration._psrchive_tool", lambda c, n: f"/fake/{n}")
+    runner = _ScriptedRunner({"pac": (0, _PAC_MODEL_SAMPLE, "")}, produce=_pac_produce)
+    ctx.runner = runner
+
+    out = await registry.dispatch(
+        "polarization_calibrate",
+        {"archive": "obs.ar", "model": "sol.pcal", "execution_mode": "sync"},
+    )
+    assert out.is_error is False, out.structured_content
+    body = out.structured_content
+    assert body["poln_calibrated"] is True and body["flux_calibrated"] is False
+    assert [w["code"] for w in body["warnings"]] == ["W_PAC_NO_FLUXDB"]
+    argv = [c for c in runner.calls if c[0] == "/fake/pac"][0]
+    assert argv[argv.index("-A") + 1].endswith("model_sol.pcal")
+    assert "-p" not in argv
+
+
+async def test_polarization_calibrate_silent_failure_envelope(ctx, registry, tmp_path, monkeypatch):
+    """pac catches per-file errors internally and still exits 0 — no output
+    file must surface as E_PROCESS_FAILED with the parsed error text."""
+    data = _archive_env(ctx, tmp_path)
+    (data / "hydra.pcal").write_bytes(b"fake")
+    monkeypatch.setattr("psrmcp.tools.calibration._psrchive_tool", lambda c, n: f"/fake/{n}")
+    ctx.runner = _ScriptedRunner({"pac": (0, _PAC_FAIL_SAMPLE, "")})
+
+    out = await registry.dispatch(
+        "polarization_calibrate",
+        {"archive": "obs.ar", "calibrators": ["hydra.pcal"], "execution_mode": "sync"},
+    )
+    assert out.is_error is True
+    err = out.structured_content["error"]
+    assert err["code"] == ErrorCode.PROCESS_FAILED.value
+    assert "no CAL info" in err["message"]
+    assert err["log_artifact_id"]
+
+
+async def test_calibrator_database_builds_and_parses(ctx, registry, tmp_path, monkeypatch):
+    data = _archive_env(ctx, tmp_path)
+    (data / "hydra.pcal").write_bytes(b"fake")
+    (data / "calfile").write_bytes(b"fake")  # no extension -> rejected up front
+    monkeypatch.setattr("psrmcp.tools.calibration._psrchive_tool", lambda c, n: f"/fake/{n}")
+
+    def _pacdb_produce(name, cwd):
+        if name == "pac" and cwd:
+            (cwd / "database.txt").write_text(_PACDB_SAMPLE)
+
+    runner = _ScriptedRunner({"pac": (0, "pac: Writing database summary file\n", "")},
+                             produce=_pacdb_produce)
+    ctx.runner = runner
+
+    out = await registry.dispatch(
+        "calibrator_database",
+        {"calibrators": ["hydra.pcal"], "execution_mode": "sync"},
+    )
+    assert out.is_error is False, out.structured_content
+    body = out.structured_content
+    assert body["database_artifact"]["artifact_id"].startswith("art_")
+    assert body["n_calibrators"] == 2
+    assert body["entry_types"] == {"FluxCal-On": 1, "PolnCal": 1}
+    assert body["entries"][0]["nchan"] == 512
+    assert body["warnings"] == []
+    argv = [c for c in runner.calls if c[0] == "/fake/pac"][0]
+    assert argv[argv.index("-w") + 0] == "-w"
+    assert argv[argv.index("-u") + 1] == "pcal"
+
+    # a calibrator without an extension is rejected before pac runs
+    out = await registry.dispatch(
+        "calibrator_database", {"calibrators": ["calfile"], "execution_mode": "sync"}
+    )
+    assert out.is_error is True
+    assert out.structured_content["error"]["code"] == ErrorCode.INVALID_INPUT.value
+
+    # pac's "no calibrators found" exits non-zero -> E_PROCESS_FAILED
+    ctx.runner = _ScriptedRunner({"pac": (-1, "", "pac: No calibrators found in cals\n")})
+    out = await registry.dispatch(
+        "calibrator_database", {"calibrators": ["hydra.pcal"], "execution_mode": "sync"}
+    )
+    assert out.is_error is True
+    assert out.structured_content["error"]["code"] == ErrorCode.PROCESS_FAILED.value
+    assert "No calibrators found" in out.structured_content["error"]["message"]

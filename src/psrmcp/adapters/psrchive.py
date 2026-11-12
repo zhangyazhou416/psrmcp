@@ -215,13 +215,17 @@ def pam_scrunch_cmd(
 
 
 def psredit_get_cmd(binary: str, source: str, keys: list[str]) -> list[str]:
-    # -qc: quiet — print "key=value" pairs without the leading filename.
-    return [binary, "-qc", "-c", ",".join(keys), source]
+    # -q and -c must be SEPARATE argv tokens: the installed psredit's option
+    # parser mis-reads the merged short form "-qc" (it swallows the 'c' and
+    # then reports the query keys "not found" while still exiting 0;
+    # verified against PSRCHIVE 2026-10-16 on 2026-11-13).
+    return [binary, "-q", "-c", ",".join(keys), source]
 
 
 def psredit_set_cmd(binary: str, source: str, assignments: dict[str, str]) -> list[str]:
-    # -e edit writes the modified archive as <basename>.edit in the process
-    # cwd (standard output option: the extension is replaced).
+    # -e edit writes the modified archive as <basename>.edit NEXT TO THE
+    # SOURCE (not in the process cwd; standard output option: the extension
+    # is replaced).
     return [binary, "-c", ",".join(f"{k}={v}" for k, v in assignments.items()),
             "-e", "edit", source]
 
@@ -574,3 +578,223 @@ def parse_rmfit(text: str) -> dict[str, Any]:
                         out[f"{field}_error"] = ve[1]
                     break
     return out
+
+
+# ---------------------------------------------------------------------------
+# pac (polarization + flux calibration)
+# ---------------------------------------------------------------------------
+
+# Model selection flags verified against pac.C case blocks: -s = Polar model
+# (CalibratorTypes::van02_EqA1), -S = complete Reception model
+# (CalibratorTypes::ovhb04); SingleAxis is the default (no flag).
+PAC_MODEL_FLAGS: dict[str, str] = {"singleaxis": "", "polar": "-s", "reception": "-S"}
+
+
+def pac_database_cmd(binary: str, cals_dir: str, database_path: str,
+                     extensions: list[str]) -> list[str]:
+    # -w writes the database summary; -k names it explicitly (otherwise it is
+    # written next to the searched tree); -p selects the searched directory
+    # (the whole tree below it is scanned); -u adds calibrator file
+    # extensions to the default scan set (cf/pcal/fcal/pfit). -u takes ONE
+    # space-separated argument.
+    args = [binary, "-w", "-p", cals_dir, "-k", database_path]
+    if extensions:
+        args += ["-u", " ".join(extensions)]
+    return args
+
+
+def pac_calibrate_cmd(
+    binary: str,
+    source: str,
+    *,
+    cals_dir: str | None = None,
+    extensions: list[str] | None = None,
+    model_file: str | None = None,
+    model_type: str = "singleaxis",
+    flux_calibration: bool = True,
+    match_time: bool = True,
+    match_coordinates: bool = True,
+    match_instrument: bool = True,
+    match_frequency: bool = True,
+    match_bandwidth: bool = True,
+    allow_opposite_sideband: bool = False,
+    match_sequence: str = "any",
+    per_channel_matching: bool = False,
+    fscrunch_to_cal: bool = False,
+    gain_normalize: bool = False,
+    out_ext: str = "calib",
+) -> list[str]:
+    # Calibrate mode. With cals_dir the calibrator database is (re)built
+    # in memory from the calibrator files each run (-p, no -w — pac only
+    # saves the scan time, the fit happens either way; -u adds the supplied
+    # extensions to the scan set exactly as in -w mode); with model_file a
+    # pcm/pacv solution archive is applied directly (-A). The matching
+    # flags only RELAX criteria: *_match=False disables that criterion
+    # entirely; there is no way to tighten pac's defaults.
+    args = [binary]
+    if cals_dir is not None:
+        args += ["-p", cals_dir]
+        if extensions:
+            args += ["-u", " ".join(extensions)]
+    if model_file is not None:
+        args += ["-A", model_file]
+    model_flag = PAC_MODEL_FLAGS.get(model_type)
+    if model_flag:
+        args.append(model_flag)
+    if not flux_calibration:
+        args.append("-P")
+    if not match_time:
+        args.append("-T")
+    if not match_coordinates:
+        args.append("-c")
+    if not match_instrument:
+        args.append("-Z")
+    if not match_frequency:
+        args.append("-F")
+    if not match_bandwidth:
+        args.append("-b")
+    if allow_opposite_sideband:
+        args.append("-o")
+    if match_sequence == "before":
+        args += ["-m", "b"]
+    elif match_sequence == "after":
+        args += ["-m", "a"]
+    if per_channel_matching:
+        args.append("-a")
+    if fscrunch_to_cal:
+        args.append("-g")
+    if gain_normalize:
+        args.append("-G")
+    args += ["-e", out_ext]
+    args.append(source)
+    return args
+
+
+def parse_pac(text: str) -> dict[str, Any]:
+    """Parse pac's combined stdout/stderr (best effort). pac reports each
+    step as "pac: <sentence>", with multi-line continuations indented by a
+    tab ("PolnCalibrator constructed from:" followed by the file list).
+    Per-file errors are caught inside pac and printed as
+    "pac: Error while handling <file>:" / "pac: Could not flux calibrate
+    <file>" while the process STILL EXITS 0 — callers must therefore check
+    that the calibrated output file exists."""
+    out: dict[str, Any] = {
+        "poln_calibrator_from": None,
+        "flux_calibrator_from": None,
+        "mean_sefd_jy": None,
+        "already_poln": False,
+        "already_flux": False,
+        "poln_complete": False,
+        "flux_complete": False,
+        "no_flux_db": False,
+        "fluxcal_error": None,
+        "handling_error": None,
+        "unloaded": [],
+    }
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+        low = stripped.lower()
+        if low.startswith("pac: polncalibrator constructed from"):
+            out["poln_calibrator_from"] = "; ".join(_pac_continuation(lines, i)) or stripped
+        elif low.startswith("pac: fluxcalibrator constructed from"):
+            out["flux_calibrator_from"] = "; ".join(_pac_continuation(lines, i)) or stripped
+        elif "mean sefd" in low and "=" in stripped:
+            try:
+                out["mean_sefd_jy"] = float(stripped.rsplit("=", 1)[1].split()[0])
+            except (IndexError, ValueError):
+                pass
+        elif low.endswith("already poln calibrated"):
+            out["already_poln"] = True
+        elif low.endswith("already flux calibrated"):
+            out["already_flux"] = True
+        elif low == "pac: poln calibration complete":
+            out["poln_complete"] = True
+        elif low == "pac: flux calibration complete":
+            out["flux_complete"] = True
+        elif low == "pac: not performing flux calibration (no database).":
+            out["no_flux_db"] = True
+        elif low.startswith("pac: could not flux calibrate"):
+            out["fluxcal_error"] = _pac_error_block(lines, i, "pac: could not flux calibrate")
+        elif low.startswith("pac: error while handling"):
+            out["handling_error"] = _pac_error_block(lines, i, "pac: error while handling")
+        elif "calibrated archive" in low and low.endswith("unloaded"):
+            # "pac: Calibrated archive <name> unloaded"
+            tokens = stripped.split()
+            if len(tokens) >= 5:
+                out["unloaded"].append(tokens[3])
+        i += 1
+    return out
+
+
+def _pac_continuation(lines: list[str], start: int) -> list[str]:
+    """Indented continuation lines after a "pac: ..." headline (e.g. the
+    calibrator file list under 'constructed from:')."""
+    parts: list[str] = []
+    j = start + 1
+    while j < len(lines):
+        nxt = lines[j]
+        if not nxt.strip() or not nxt[:1].isspace():
+            break
+        parts.append(nxt.strip())
+        j += 1
+    return parts
+
+
+def _pac_error_block(lines: list[str], start: int, lead: str) -> str:
+    """File + indented error text of an in-file pac error headline."""
+    raw = lines[start].strip()
+    idx = raw.lower().index(lead) + len(lead)
+    parts = [raw[idx:].strip().rstrip(":").strip()]
+    parts += _pac_continuation(lines, start)
+    return "; ".join(p for p in parts if p)
+
+
+def parse_dbase_entries(text: str) -> list[dict[str, Any]]:
+    """Parse a pac calibrator database.txt: two header lines
+    ("Pulsar::Database::path <dir>", "Pulsar::Database # of entries = N")
+    followed by one whitespace-separated line per calibrator:
+    `filename type RA DEC MJD bandwidth freq nchan instrument receiver`
+    (filename stored relative to the header path; directories were verified
+    in Database.C). Interpolator entries have an MJD range with '-' in the
+    MJD field and no nchan column. Malformed lines are skipped, mirroring
+    Database::load's discarding behaviour."""
+    entries: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("Pulsar::Database"):
+            continue
+        tok = stripped.split()
+        interpolator = "-" in tok[4] if len(tok) > 4 else False
+        if interpolator:
+            if len(tok) < 9:
+                continue
+            nchan: int | None = None
+            instrument, receiver = tok[6], tok[7]
+        else:
+            if len(tok) < 10:
+                continue
+            try:
+                nchan = int(tok[7])
+            except ValueError:
+                continue
+            instrument, receiver = tok[8], tok[9]
+        try:
+            bandwidth = float(tok[5])
+            frequency = float(tok[6])
+        except (IndexError, ValueError):
+            continue
+        entries.append({
+            "filename": tok[0],
+            "obs_type": tok[1],
+            "ra_str": tok[2],
+            "dec_str": tok[3],
+            "mjd": tok[4],
+            "bandwidth_mhz": bandwidth,
+            "freq_mhz": frequency,
+            "nchan": nchan,
+            "instrument": instrument,
+            "receiver": receiver,
+        })
+    return entries

@@ -1,4 +1,4 @@
-"""toa_extract / timing_fit / timing_diagnose (TOOLS.md 5.15-5.17)."""
+"""toa_extract / timing_fit / timing_diagnose (TOOLS.md 5.22-5.24)."""
 
 from __future__ import annotations
 

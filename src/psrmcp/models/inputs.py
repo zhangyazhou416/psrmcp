@@ -1,4 +1,4 @@
-"""Input models for all 25 tools (TOOLS.md section 5 schemas, 1:1).
+"""Input models for all 27 tools (TOOLS.md section 5 schemas, 1:1).
 
 All models forbid extra properties, mirroring `additionalProperties: false`.
 """
@@ -405,6 +405,59 @@ class RotationMeasureFitInput(BaseModel):
             if window is not None and not (0.0 <= window[0] < window[1] <= 1.0):
                 raise ValueError(f"{name} must be 0 <= x1 < x2 <= 1 (phase turns), got {window}")
         return self
+
+
+class PolarizationCalibrateInput(BaseModel):
+    """Polarimetric/flux calibration with pac. Exactly one calibration
+    source: `calibrators` (PolnCal / FluxCal-On / FluxCal-Off scans, matched
+    against the observation per pac's criteria) or `model` (a pcm/pacv
+    solution archive applied directly). The *_match flags only RELAX pac's
+    default matching criteria (each disables that criterion). The input
+    archive is read-only; the calibrated archive is a new artifact."""
+
+    model_config = FORBID
+    archive: str
+    root: str | None = None
+    calibrators: list[str] | None = Field(default=None, min_length=1, max_length=64)
+    model: str | None = None
+    model_type: Literal["singleaxis", "polar", "reception"] = "singleaxis"
+    flux_calibration: bool = True
+    match_time: bool = True
+    match_coordinates: bool = True
+    match_instrument: bool = True
+    match_frequency: bool = True
+    match_bandwidth: bool = True
+    allow_opposite_sideband: bool = False
+    match_sequence: Literal["any", "before", "after"] = "any"
+    per_channel_matching: bool = False
+    fscrunch_to_cal: bool = False
+    gain_normalize: bool = False
+    output_name: str | None = Field(default=None, max_length=128)
+    execution_mode: ExecutionMode = ExecutionMode.AUTO
+
+    @model_validator(mode="after")
+    def _check_source(self):
+        sources = [s for s in (self.calibrators, self.model) if s]
+        if len(sources) != 1:
+            raise ValueError(
+                "provide exactly one calibration source: calibrators (list of "
+                "calibrator scan archives) or model (pcm/pacv solution archive)"
+            )
+        return self
+
+
+class CalibratorDatabaseInput(BaseModel):
+    """Build a pac calibrator database summary (database.txt) from calibrator
+    archive scans. The files are indexed by their header metadata (time,
+    position, frequency, receiver); pac later matches pulsar observations
+    against these entries. pac identifies calibrator files by extension, so
+    every listed file must have one."""
+
+    model_config = FORBID
+    calibrators: list[str] = Field(min_length=1, max_length=64)
+    root: str | None = None
+    output_name: str | None = Field(default=None, max_length=128)
+    execution_mode: ExecutionMode = ExecutionMode.AUTO
 
 
 class ToaExtractInput(BaseModel):

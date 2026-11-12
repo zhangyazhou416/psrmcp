@@ -1,4 +1,4 @@
-"""Output models for all 25 tools (TOOLS.md section 5 output schemas)."""
+"""Output models for all 27 tools (TOOLS.md section 5 output schemas)."""
 
 from __future__ import annotations
 
@@ -510,6 +510,81 @@ class RotationMeasureFitResult(ToolResult):
             lines.append(f"- RM-corrected archive: `{self.rm_archive.artifact_id}`")
         for a in self.data_artifacts:
             lines.append(f"- data table: `{a.artifact_id}`")
+        for w in self.warnings:
+            lines.append(f"- ⚠ {w.message}")
+        return "\n".join(lines)
+
+
+class CalibratorDatabaseEntry(BaseModel):
+    """One line of a pac calibrator database.txt (header metadata of one
+    calibrator archive; filename is relative to the database directory)."""
+    model_config = FORBID
+    filename: str
+    obs_type: str
+    ra_str: str
+    dec_str: str
+    mjd: str
+    bandwidth_mhz: float
+    freq_mhz: float
+    nchan: int | None = None
+    instrument: str
+    receiver: str
+
+
+class CalibratorDatabaseResult(ToolResult):
+    """pac calibrator database summary (database.txt artifact + parsed
+    entries). pac writes one entry per calibrator archive found; obs_type is
+    pac's classification from the archive header (PolnCal, FluxCal-On,
+    FluxCal-Off, ...)."""
+    model_config = FORBID
+    database_artifact: ArtifactRef
+    n_calibrators: int = Field(ge=0)
+    entry_types: dict[str, int] = Field(default_factory=dict)
+    entries: list[CalibratorDatabaseEntry] = Field(default_factory=list)
+    warnings: list[WarningInfo] = Field(default_factory=list)
+
+    def summarize(self) -> str:
+        lines = [
+            f"Calibrator database: {self.n_calibrators} entr"
+            + ("y" if self.n_calibrators == 1 else "ies")
+            + f" -> `{self.database_artifact.artifact_id}`"
+        ]
+        if self.entry_types:
+            types = ", ".join(f"{t}: {n}" for t, n in sorted(self.entry_types.items()))
+            lines.append(f"- types: {types}")
+        for w in self.warnings:
+            lines.append(f"- ⚠ {w.message}")
+        return "\n".join(lines)
+
+
+class PolarizationCalibrateResult(ToolResult):
+    """pac calibration result. poln_calibrated/flux_calibrated report which
+    stages completed (flux calibration is skipped with a warning when no
+    flux calibrator matches or when the source is a model solution without a
+    calibrator database)."""
+    model_config = FORBID
+    calibrated_archive: ArtifactRef
+    poln_calibrated: bool
+    flux_calibrated: bool
+    poln_calibrator_source: str | None = None
+    flux_calibrator_source: str | None = None
+    mean_sefd_jy: float | None = None
+    warnings: list[WarningInfo] = Field(default_factory=list)
+
+    def summarize(self) -> str:
+        lines = [
+            f"Polarization calibration complete: `{self.calibrated_archive.artifact_id}`",
+            f"- poln: {'calibrated' if self.poln_calibrated else 'not applied'}"
+            + (f" (from {self.poln_calibrator_source})" if self.poln_calibrator_source else ""),
+        ]
+        if self.flux_calibrated:
+            stage = "calibrated"
+            if self.mean_sefd_jy is not None:
+                stage += f", mean SEFD = {self.mean_sefd_jy:.4g} Jy"
+            lines.append(f"- flux: {stage}"
+                         + (f" (from {self.flux_calibrator_source})" if self.flux_calibrator_source else ""))
+        else:
+            lines.append("- flux: not applied")
         for w in self.warnings:
             lines.append(f"- ⚠ {w.message}")
         return "\n".join(lines)

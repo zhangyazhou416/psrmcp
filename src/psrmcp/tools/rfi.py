@@ -1,4 +1,4 @@
-"""rfi_scan / rfi_zap (TOOLS.md 5.11-5.12)."""
+"""rfi_scan / rfi_zap (TOOLS.md 5.13-5.14)."""
 
 from __future__ import annotations
 

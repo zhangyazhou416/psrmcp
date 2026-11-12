@@ -19,6 +19,7 @@ from .tools.registry import ToolRegistry
 from .tools import (
     archive as tools_archive,
     artifacts as tools_artifacts,
+    calibration as tools_calibration,
     catalog as tools_catalog,
     data as tools_data,
     dedispersion as tools_dedispersion,
@@ -35,7 +36,7 @@ log = logging.getLogger(__name__)
 _TOOL_MODULES = (
     tools_system, tools_data, tools_catalog, tools_archive,
     tools_dedispersion, tools_rfi, tools_profile, tools_singlepulse,
-    tools_rmfit, tools_timing, tools_artifacts,
+    tools_rmfit, tools_calibration, tools_timing, tools_artifacts,
 )
 
 
@@ -47,7 +48,7 @@ def build_registry(ctx) -> ToolRegistry:
 
 
 def create_server(cfg: Config):
-    """Assemble the low-level MCP Server with all 25 tools / resources / prompts.
+    """Assemble the low-level MCP Server with all 27 tools / resources / prompts.
 
     SDK >= 2 takes handler callables in the constructor (the decorator API is
     gone): on_list_tools / on_call_tool / on_list_resources / on_read_resource /

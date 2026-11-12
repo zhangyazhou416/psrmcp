@@ -182,3 +182,61 @@ def test_psrcat_conditions_use_env_db():
     assert out.stdout.strip(), "-l condition syntax mismatch with the implementation; update adapters/psrcat.py"
     rows = [pc.parse_psrcat_row(ln) for ln in out.stdout.splitlines() if ln.strip()]
     assert rows and all(float(r["p0_s"]) < 0.1 for r in rows)
+
+
+def test_psredit_query_separate_flag_form():
+    """psredit: -q and -c must be separate argv tokens — the merged '-qc -c'
+    form reports the query keys 'not found' (exit 0), which archive_edit's
+    query path relies on parsing. Regression guard for psredit_get_cmd."""
+    from psrmcp.adapters import psrchive as psa
+
+    psredit = _which("psredit")
+    archive = _archive()
+    if not (psredit and archive):
+        pytest.skip("set PSRMCP_CONTRACT_ARCHIVE=<archive path> to run")
+
+    argv = psa.psredit_get_cmd(psredit, archive, ["type", "polc"])
+    assert "-q" in argv and "-c" in argv and "-qc" not in argv, argv
+    out = subprocess.run(argv, capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr[-500:]
+    assert "not found" not in (out.stdout + out.stderr), \
+        f"query keys rejected — merged -qc flag form regression: {out.stdout!r} {out.stderr!r}"
+    parsed = psa.parse_psrstat(out.stdout)
+    assert "type" in parsed and parsed["type"], f"psredit query yielded no keys: {out.stdout!r}"
+
+
+def test_pac_calibrate_writes_output(tmp_path):
+    """pac on an observation with a PolnCal-typed copy exits 0 and writes
+    <input>.calib[.P] — even when flux calibration fails, pac still exits 0,
+    so the tools must check the output file, not the exit code."""
+    from psrmcp.adapters import psrchive as psa
+
+    pac, psredit = _which("pac"), _which("psredit")
+    archive = _archive()
+    if not (pac and psredit and archive):
+        pytest.skip("set PSRMCP_CONTRACT_ARCHIVE=<archive path> to run")
+
+    # pac matches calibrators by extension (-u): stage a PolnCal-typed copy
+    cal = tmp_path / "cals" / "cal.pcal"
+    cal.parent.mkdir()
+    shutil.copy(archive, tmp_path / "obs.ar")
+    shutil.copy(archive, cal)
+    flip = subprocess.run(psa.psredit_set_cmd(psredit, str(cal), {"type": "PolnCal"}),
+                          capture_output=True, text=True, cwd=tmp_path)
+    assert flip.returncode == 0, flip.stderr[-500:]
+    edited = cal.parent / "cal.edit"
+    assert edited.exists(), f"psredit -c type= wrote nothing: {sorted(p.name for p in tmp_path.rglob('*'))}"
+    shutil.move(edited, cal)
+
+    argv = psa.pac_calibrate_cmd(pac, str(tmp_path / "obs.ar"),
+                                 cals_dir=str(cal.parent), extensions=["pcal"])
+    out = subprocess.run(argv, capture_output=True, text=True, cwd=tmp_path)
+    assert out.returncode == 0, out.stderr[-500:]
+    produced = sorted(tmp_path.glob("obs.calib*"))
+    assert produced, (
+        f"pac exited 0 but wrote no obs.calib* (silent per-file failure): "
+        f"stdout/stderr={out.stdout[-300:]!r} {out.stderr[-300:]!r}"
+    )
+    assert produced[0].name.endswith("P"), (
+        "no FluxCal present, so pac must append 'P' (poln-only) to the output name"
+    )

@@ -420,6 +420,8 @@ MCP `tools/call` 返回：
 | `profile_optimize` | true | false | true | false | 是 |
 | `single_pulse_analyze` | true | false | true | false | 是 |
 | `rotation_measure_fit` | true | false | true | false | 是 |
+| `polarization_calibrate` | false | false | true | false | 是 |
+| `calibrator_database` | false | false | true | false | 是 |
 | `toa_extract` | false | false | true | false | 是 |
 | `timing_fit` | false | false | true | false | 是 |
 | `timing_diagnose` | true | false | true | false | 否 |
@@ -2203,7 +2205,232 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.20 `toa_extract`
+### 5.20 `polarization_calibrate`
+
+**用途**：用 pac 对脉冲星 archive 做偏振（可选流量）定标。定标源二选一：`calibrators`（PolnCal / FluxCal-On / FluxCal-Off 扫描；每次调用在内存中重建定标器数据库，单次调用自包含）或 `model`（直接应用 pcm/pacv 的模型解）。模型：`singleaxis`（默认）、`polar`(`-s`)、`reception`(`-S`)。`*_match` 标志只能放宽 pac 的匹配判据（每个标志关闭一条判据）；`match_sequence` 限定只用脉冲星观测之前/之后的定标器。pac 内部会捕获单文件错误并仍以 0 退出，因此以校准输出文件是否产出判定成败；当偏振定标成功而流量定标失败时，pac 在输出名末尾追加 `P`，并报告 `W_PAC_POLN_ONLY` / `W_PAC_FLUXCAL_FAILED`（`flux_calibration=false` 时 `P` 后缀属预期，不告警）。模型解没有定标器数据库可用，流量定标被跳过并给出 `W_PAC_NO_FLUXDB`。
+
+**后端**：pac  
+**长任务**：是  
+**Annotations**：`readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### 输入 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/polarization_calibrate.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Pulsar observation: artifact ID or relative path under a read root"
+    },
+    "root": {
+      "type": "string"
+    },
+    "calibrators": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "maxItems": 64,
+      "description": "Calibrator scan archives (PolnCal / FluxCal-On / FluxCal-Off); exclusive with model"
+    },
+    "model": {
+      "type": "string",
+      "description": "pcm/pacv calibrator solution archive applied directly (-A); exclusive with calibrators"
+    },
+    "model_type": {
+      "enum": [
+        "polar",
+        "reception",
+        "singleaxis"
+      ],
+      "default": "singleaxis"
+    },
+    "flux_calibration": {
+      "type": "boolean",
+      "default": true
+    },
+    "match_time": {
+      "type": "boolean",
+      "default": true,
+      "description": "false disables pac's time matching criterion (-T)"
+    },
+    "match_coordinates": {
+      "type": "boolean",
+      "default": true,
+      "description": "false disables pac's sky-coordinate matching criterion (-c)"
+    },
+    "match_instrument": {
+      "type": "boolean",
+      "default": true,
+      "description": "false disables pac's instrument matching criterion (-Z)"
+    },
+    "match_frequency": {
+      "type": "boolean",
+      "default": true,
+      "description": "false disables pac's centre-frequency matching criterion (-F)"
+    },
+    "match_bandwidth": {
+      "type": "boolean",
+      "default": true,
+      "description": "false disables pac's bandwidth matching criterion (-b)"
+    },
+    "allow_opposite_sideband": {
+      "type": "boolean",
+      "default": false
+    },
+    "match_sequence": {
+      "enum": [
+        "after",
+        "any",
+        "before"
+      ],
+      "default": "any"
+    },
+    "per_channel_matching": {
+      "type": "boolean",
+      "default": false
+    },
+    "fscrunch_to_cal": {
+      "type": "boolean",
+      "default": false
+    },
+    "gain_normalize": {
+      "type": "boolean",
+      "default": false
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 输出 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/polarization_calibrate.output.json",
+  "type": "object",
+  "required": ["result_type", "calibrated_archive", "poln_calibrated", "flux_calibrated", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "calibrated_archive": {"$ref": "#/$defs/ArtifactRef"},
+    "poln_calibrated": {"type": "boolean"},
+    "flux_calibrated": {"type": "boolean"},
+    "poln_calibrator_source": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    "flux_calibrator_source": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    "mean_sefd_jy": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 错误码
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+### 5.21 `calibrator_database`
+
+**用途**：从定标器扫描 archive 构建 pac 定标器数据库摘要（`database.txt` artifact）。条目按头部元数据（时间、位置、频率、接收机）索引，供 pac 与脉冲星观测匹配；全部条目解析后内联返回（`entries` 的 `obs_type` 来自 archive 头部，如 PolnCal / FluxCal-On / FluxCal-Off，各类型计数在 `entry_types`）。pac 按扩展名识别定标器文件，因此列出的每个文件都必须有扩展名（否则 `E_INVALID_INPUT`）；所给扩展名会通过 `-u` 追加到 pac 默认扫描集（cf/pcal/fcal/pfit）之后。"找不到定标器"以非零码退出，表现为 `E_PROCESS_FAILED`。
+
+**后端**：pac  
+**长任务**：是  
+**Annotations**：`readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### 输入 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/calibrator_database.input.json",
+  "type": "object",
+  "required": [
+    "calibrators"
+  ],
+  "properties": {
+    "calibrators": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "maxItems": 64,
+      "description": "Calibrator scan archives (PolnCal / FluxCal-On / FluxCal-Off / pfit solutions); each file must have an extension"
+    },
+    "root": {
+      "type": "string"
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 输出 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/calibrator_database.output.json",
+  "type": "object",
+  "required": ["result_type", "database_artifact", "n_calibrators", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "database_artifact": {"$ref": "#/$defs/ArtifactRef"},
+    "n_calibrators": {"type": "integer", "minimum": 0},
+    "entry_types": {"type": "object", "additionalProperties": {"type": "integer"}},
+    "entries": {"type": "array", "items": {"$ref": "#/$defs/CalibratorDatabaseEntry"}},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 错误码
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+### 5.22 `toa_extract`
 
 **用途**：使用标准轮廓从 archive 提取 TOA，生成 TEMPO `.tim` 文件。
 
@@ -2311,7 +2538,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.21 `timing_fit`
+### 5.23 `timing_fit`
 
 **用途**：使用 PINT 或 tempo2 对 `.par` + `.tim` 做计时拟合，返回更新后的 `.par`、拟合统计、残差和残差图。
 
@@ -2448,7 +2675,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.22 `timing_diagnose`
+### 5.24 `timing_diagnose`
 
 **用途**：对已有 `.par` + `.tim` 做残差和模型诊断，不重新拟合。可检查离群点、DM 变化、JUMP 和残差分布。
 
@@ -2567,7 +2794,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.23 `artifact_list`
+### 5.25 `artifact_list`
 
 **用途**：列出当前工作区的 artifact，支持按类型、时间和游标分页。
 
@@ -2639,7 +2866,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.24 `job_get`
+### 5.26 `job_get`
 
 **用途**：查询异步任务状态和结果。仅在客户端不支持 MCP Tasks 扩展时作为兜底使用。
 
@@ -2687,7 +2914,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.25 `job_cancel`
+### 5.27 `job_cancel`
 
 **用途**：请求取消异步任务。取消是协作式的：服务器先发送 `SIGTERM`，宽限期后如仍运行则 `SIGKILL` 进程组。
 

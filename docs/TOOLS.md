@@ -420,6 +420,8 @@ The following `$defs` are referenced by all tool schemas. Implementations may ge
 | `profile_optimize` | true | false | true | false | yes |
 | `single_pulse_analyze` | true | false | true | false | yes |
 | `rotation_measure_fit` | true | false | true | false | yes |
+| `polarization_calibrate` | false | false | true | false | yes |
+| `calibrator_database` | false | false | true | false | yes |
 | `toa_extract` | false | false | true | false | yes |
 | `timing_fit` | false | false | true | false | yes |
 | `timing_diagnose` | true | false | true | false | no |
@@ -2203,7 +2205,232 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.20 `toa_extract`
+### 5.20 `polarization_calibrate`
+
+**Purpose**: Polarimetrically (and optionally flux) calibrate a pulsar archive with pac. Exactly one calibration source: `calibrators` (PolnCal / FluxCal-On / FluxCal-Off scans; the calibrator database is rebuilt in memory per call, so each call is self-contained) or `model` (a pcm/pacv solution archive applied directly). Models: `singleaxis` (default), `polar` (`-s`), `reception` (`-S`). The `*_match` flags can only RELAX pac's matching criteria (each disables one criterion); `match_sequence` restricts to calibrators observed before/after the pulsar. pac catches per-file errors internally and still exits 0, so success is verified by the presence of the calibrated output; when polarimetric calibration succeeds but flux calibration does not, pac appends `P` to the output name and `W_PAC_POLN_ONLY` / `W_PAC_FLUXCAL_FAILED` is reported (the `P` suffix is expected and silent when `flux_calibration=false`). Model solutions run without a calibrator database, so flux calibration is skipped with `W_PAC_NO_FLUXDB`.
+
+**Backend**: pac  
+**Long-running**: yes  
+**Annotations**: `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### Input Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/polarization_calibrate.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Pulsar observation: artifact ID or relative path under a read root"
+    },
+    "root": {
+      "type": "string"
+    },
+    "calibrators": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "maxItems": 64,
+      "description": "Calibrator scan archives (PolnCal / FluxCal-On / FluxCal-Off); exclusive with model"
+    },
+    "model": {
+      "type": "string",
+      "description": "pcm/pacv calibrator solution archive applied directly (-A); exclusive with calibrators"
+    },
+    "model_type": {
+      "enum": [
+        "polar",
+        "reception",
+        "singleaxis"
+      ],
+      "default": "singleaxis"
+    },
+    "flux_calibration": {
+      "type": "boolean",
+      "default": true
+    },
+    "match_time": {
+      "type": "boolean",
+      "default": true,
+      "description": "false disables pac's time matching criterion (-T)"
+    },
+    "match_coordinates": {
+      "type": "boolean",
+      "default": true,
+      "description": "false disables pac's sky-coordinate matching criterion (-c)"
+    },
+    "match_instrument": {
+      "type": "boolean",
+      "default": true,
+      "description": "false disables pac's instrument matching criterion (-Z)"
+    },
+    "match_frequency": {
+      "type": "boolean",
+      "default": true,
+      "description": "false disables pac's centre-frequency matching criterion (-F)"
+    },
+    "match_bandwidth": {
+      "type": "boolean",
+      "default": true,
+      "description": "false disables pac's bandwidth matching criterion (-b)"
+    },
+    "allow_opposite_sideband": {
+      "type": "boolean",
+      "default": false
+    },
+    "match_sequence": {
+      "enum": [
+        "after",
+        "any",
+        "before"
+      ],
+      "default": "any"
+    },
+    "per_channel_matching": {
+      "type": "boolean",
+      "default": false
+    },
+    "fscrunch_to_cal": {
+      "type": "boolean",
+      "default": false
+    },
+    "gain_normalize": {
+      "type": "boolean",
+      "default": false
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Output Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/polarization_calibrate.output.json",
+  "type": "object",
+  "required": ["result_type", "calibrated_archive", "poln_calibrated", "flux_calibrated", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "calibrated_archive": {"$ref": "#/$defs/ArtifactRef"},
+    "poln_calibrated": {"type": "boolean"},
+    "flux_calibrated": {"type": "boolean"},
+    "poln_calibrator_source": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    "flux_calibrator_source": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    "mean_sefd_jy": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Error Codes
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+### 5.21 `calibrator_database`
+
+**Purpose**: Build a pac calibrator database summary (`database.txt` artifact) from calibrator archive scans. Entries are indexed by header metadata (time, position, frequency, receiver) so pac can match them against pulsar observations; all entries are parsed and returned inline (`entries` with `obs_type` from the archive header, e.g. PolnCal / FluxCal-On / FluxCal-Off, plus per-type counts in `entry_types`). pac identifies calibrator files by extension, so every listed file must have one (`E_INVALID_INPUT` otherwise); the supplied extensions are added to pac's default scan set (cf/pcal/fcal/pfit) via `-u`. "No calibrators found" exits non-zero and surfaces as `E_PROCESS_FAILED`.
+
+**Backend**: pac  
+**Long-running**: yes  
+**Annotations**: `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### Input Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/calibrator_database.input.json",
+  "type": "object",
+  "required": [
+    "calibrators"
+  ],
+  "properties": {
+    "calibrators": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "maxItems": 64,
+      "description": "Calibrator scan archives (PolnCal / FluxCal-On / FluxCal-Off / pfit solutions); each file must have an extension"
+    },
+    "root": {
+      "type": "string"
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Output Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/calibrator_database.output.json",
+  "type": "object",
+  "required": ["result_type", "database_artifact", "n_calibrators", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "database_artifact": {"$ref": "#/$defs/ArtifactRef"},
+    "n_calibrators": {"type": "integer", "minimum": 0},
+    "entry_types": {"type": "object", "additionalProperties": {"type": "integer"}},
+    "entries": {"type": "array", "items": {"$ref": "#/$defs/CalibratorDatabaseEntry"}},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Error Codes
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+### 5.22 `toa_extract`
 
 **Purpose**: Extracts TOAs from an archive against a standard profile and produces a TEMPO `.tim` file.
 
@@ -2311,7 +2538,7 @@ Semantic validation:
 
 ---
 
-### 5.21 `timing_fit`
+### 5.23 `timing_fit`
 
 **Purpose**: Runs a timing fit on `.par` + `.tim` with PINT or tempo2, returning the updated `.par`, fit statistics, residuals, and residual plots.
 
@@ -2448,7 +2675,7 @@ Semantic validation:
 
 ---
 
-### 5.22 `timing_diagnose`
+### 5.24 `timing_diagnose`
 
 **Purpose**: Runs residual and model diagnostics on existing `.par` + `.tim` without refitting. Can check outliers, DM variations, JUMPs, and the residual distribution.
 
@@ -2567,7 +2794,7 @@ Semantic validation:
 
 ---
 
-### 5.23 `artifact_list`
+### 5.25 `artifact_list`
 
 **Purpose**: Lists artifacts in the current workspace, with paging by kind, time, and cursor.
 
@@ -2639,7 +2866,7 @@ Semantic validation:
 
 ---
 
-### 5.24 `job_get`
+### 5.26 `job_get`
 
 **Purpose**: Queries the status and result of an asynchronous job. Fallback used only when the client does not support the MCP Tasks extension.
 
@@ -2687,7 +2914,7 @@ Semantic validation:
 
 ---
 
-### 5.25 `job_cancel`
+### 5.27 `job_cancel`
 
 **Purpose**: Requests cancellation of an asynchronous job. Cancellation is cooperative: the server sends `SIGTERM` first, and `SIGKILL`s the process group if it is still running after the grace period.
 

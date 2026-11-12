@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/polarization_calibrate.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Pulsar observation: artifact ID or relative path under a read root"
+    },
+    "root": {
+      "type": "string"
+    },
+    "calibrators": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "maxItems": 64,
+      "description": "Calibrator scan archives (PolnCal / FluxCal-On / FluxCal-Off); exclusive with model"
+    },
+    "model": {
+      "type": "string",
+      "description": "pcm/pacv calibrator solution archive applied directly (-A); exclusive with calibrators"
+    },
+    "model_type": {
+      "enum": [
+        "polar",
+        "reception",
+        "singleaxis"
+      ],
+      "default": "singleaxis"
+    },
+    "flux_calibration": {
+      "type": "boolean",
+      "default": true
+    },
+    "match_time": {
+      "type": "boolean",
+      "default": true,
+      "description": "false disables pac's time matching criterion (-T)"
+    },
+    "match_coordinates": {
+      "type": "boolean",
+      "default": true,
+      "description": "false disables pac's sky-coordinate matching criterion (-c)"
+    },
+    "match_instrument": {
+      "type": "boolean",
+      "default": true,
+      "description": "false disables pac's instrument matching criterion (-Z)"
+    },
+    "match_frequency": {
+      "type": "boolean",
+      "default": true,
+      "description": "false disables pac's centre-frequency matching criterion (-F)"
+    },
+    "match_bandwidth": {
+      "type": "boolean",
+      "default": true,
+      "description": "false disables pac's bandwidth matching criterion (-b)"
+    },
+    "allow_opposite_sideband": {
+      "type": "boolean",
+      "default": false
+    },
+    "match_sequence": {
+      "enum": [
+        "after",
+        "any",
+        "before"
+      ],
+      "default": "any"
+    },
+    "per_channel_matching": {
+      "type": "boolean",
+      "default": false
+    },
+    "fscrunch_to_cal": {
+      "type": "boolean",
+      "default": false
+    },
+    "gain_normalize": {
+      "type": "boolean",
+      "default": false
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/calibrator_database.input.json",
+  "type": "object",
+  "required": [
+    "calibrators"
+  ],
+  "properties": {
+    "calibrators": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "maxItems": 64,
+      "description": "Calibrator scan archives (PolnCal / FluxCal-On / FluxCal-Off / pfit solutions); each file must have an extension"
+    },
+    "root": {
+      "type": "string"
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}

@@ -3,7 +3,7 @@
 Usage:
     uv run python examples/client_stdio.py [--config path/to/config.toml]
 
-Exits non-zero if fewer than 25 tools are listed or the round-trip fails.
+Exits non-zero if fewer than 27 tools are listed or the round-trip fails.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ EXPECTED_TOOLS = {
     "archive_inspect", "archive_convert", "archive_merge", "archive_transform", "archive_edit",
     "dedisperse",
     "rfi_scan", "rfi_zap", "profile_standardize", "profile_measure", "profile_optimize", "single_pulse_analyze", "rotation_measure_fit",
+    "polarization_calibrate", "calibrator_database",
     "toa_extract", "timing_fit", "timing_diagnose",
     "artifact_list", "job_get", "job_cancel",
 }
