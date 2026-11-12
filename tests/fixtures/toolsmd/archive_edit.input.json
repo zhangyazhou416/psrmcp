@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/archive_edit.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Artifact ID or relative path under a read root"
+    },
+    "root": {
+      "type": "string"
+    },
+    "query": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "string"
+      },
+      "description": "psredit attribute paths to read from the input archive (e.g. name, dm, int:mjd)"
+    },
+    "set": {
+      "type": "object",
+      "maxProperties": 64,
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "psredit assignments written to the output artifact (e.g. {\"dm\": \"2.644\"})"
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    }
+  },
+  "additionalProperties": false
+}

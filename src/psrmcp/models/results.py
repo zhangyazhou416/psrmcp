@@ -1,4 +1,4 @@
-"""Output models for all 20 tools (TOOLS.md section 5 output schemas)."""
+"""Output models for all 23 tools (TOOLS.md section 5 output schemas)."""
 
 from __future__ import annotations
 
@@ -246,6 +246,37 @@ class ArchiveMergeResult(ToolResult):
                 f"(nsub={d.nsubint} nchan={d.nchan} nbin={d.nbin})")
 
 
+class ArchiveTransformResult(ToolResult):
+    artifact: ArtifactRef
+    dimensions: Dimensions
+    warnings: list[WarningInfo] = Field(default_factory=list)
+
+    def summarize(self) -> str:
+        d = self.dimensions
+        lines = [f"Transform complete: `{self.artifact.artifact_id}` "
+                 f"(nsub={d.nsubint} nchan={d.nchan} npol={d.npol} nbin={d.nbin})"]
+        for w in self.warnings:
+            lines.append(f"- ⚠ {w.message}")
+        return "\n".join(lines)
+
+
+class ArchiveEditResult(ToolResult):
+    artifact: ArtifactRef | None = None
+    values: dict[str, Any] = Field(default_factory=dict)
+    warnings: list[WarningInfo] = Field(default_factory=list)
+
+    def summarize(self) -> str:
+        lines: list[str] = []
+        if self.values:
+            lines.append("Queried values (input archive, pre-edit):")
+            lines += [f"- {k} = {v}" for k, v in self.values.items()]
+        if self.artifact is not None:
+            lines.append(f"Edited archive written: `{self.artifact.artifact_id}`")
+        for w in self.warnings:
+            lines.append(f"- ⚠ {w.message}")
+        return "\n".join(lines) or "No query results."
+
+
 class DedisperseResult(ToolResult):
     artifact: ArtifactRef
     dm_used: float = Field(ge=0)
@@ -343,6 +374,34 @@ class ProfileMeasureResult(ToolResult):
         if m.flux_mjy is not None:
             parts.append(f"flux = {m.flux_mjy:.2f} mJy")
         return "Profile measurement: " + (", ".join(parts) if parts else "no metrics available")
+
+
+class ProfileOptimizeResult(ToolResult):
+    """Best period/DM found by the S/N search (pdmp). Values are best-effort
+    parses of pdmp's text output; a None field means the label was not found
+    in this pdmp build's output (see warnings)."""
+
+    best_period_ms: float | None = None
+    period_error_ms: float | None = None
+    best_dm: float | None = None
+    dm_error: float | None = None
+    best_snr: float | None = None
+    warnings: list[WarningInfo] = Field(default_factory=list)
+
+    def summarize(self) -> str:
+        parts: list[str] = []
+        if self.best_period_ms is not None:
+            parts.append(f"P = {self.best_period_ms:.6f} ms"
+                         + (f" +/- {self.period_error_ms:.2g} ms" if self.period_error_ms is not None else ""))
+        if self.best_dm is not None:
+            parts.append(f"DM = {self.best_dm:.4f} pc cm^-3"
+                         + (f" +/- {self.dm_error:.2g}" if self.dm_error is not None else ""))
+        if self.best_snr is not None:
+            parts.append(f"S/N = {self.best_snr:.1f}")
+        lines = ["Period/DM optimization: " + (", ".join(parts) if parts else "no best-fit values parsed")]
+        for w in self.warnings:
+            lines.append(f"- ⚠ {w.message}")
+        return "\n".join(lines)
 
 
 class ToaSnrStats(BaseModel):

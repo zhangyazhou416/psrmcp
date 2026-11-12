@@ -209,3 +209,62 @@ def test_catalog_query_cmd_contract():
     i = argv.index("-l")
     assert argv[i + 1] == "p0 < 0.005 && s1400 > 10"
     assert "-db" not in argv
+
+
+def test_pam_scrunch_cmd_contract():
+    argv = psa.pam_scrunch_cmd("pam", "src.ar", "tr", freq_factor=4, time_factor=2,
+                               sum_pols=True, bin_factor=2, remove_baseline=True, centre=True)
+    assert argv[:8] == ["pam", "-F", "4", "-T", "2", "-b", "2", "-p"]
+    assert argv[8:] == ["-r", "-c", "-e", "tr", "src.ar"]
+    # factor 1 / None are no-ops
+    argv = psa.pam_scrunch_cmd("pam", "src.ar", "tr", freq_factor=1, time_factor=None)
+    assert argv == ["pam", "-e", "tr", "src.ar"]
+
+
+def test_pdmp_cmd_contract():
+    argv = psa.pdmp_cmd("pdmp", "obs.ar", dm_offset=1.0, dm_half_range=5.0,
+                        period_offset_us=6.0, max_channels=128, std_profile="std.ar")
+    assert argv[:3] == ["pdmp", "-g", "/null"]
+    for flag, val in (("-po", "6.0"), ("-do", "1.0"),
+                      ("-dr", "5.0"), ("-mc", "128"), ("-s", "std.ar")):
+        assert argv[argv.index(flag) + 1] == val
+    assert argv[-1] == "obs.ar"
+    # bare minimum
+    assert psa.pdmp_cmd("pdmp", "obs.ar") == ["pdmp", "-g", "/null", "obs.ar"]
+
+
+def test_parse_pdmp_labels_and_errors():
+    sample = """\
+Reading archive
+Best barycentric period (ms) = 22.789120 +/- 1.2e-05
+Best DM = 2.6441 +/- 0.002
+Best signal-to-noise ratio = 154.3
+"""
+    out = psa.parse_pdmp(sample)
+    assert out["best_period_ms"] == 22.789120
+    assert out["best_period_ms_error"] == 1.2e-05
+    assert out["best_dm"] == 2.6441
+    assert out["best_dm_error"] == 0.002
+    assert out["best_snr"] == 154.3
+    assert psa.parse_pdmp("nothing useful\n") == {}
+
+
+def test_psredit_cmd_contracts():
+    assert psa.psredit_get_cmd("psredit", "obs.ar", ["name", "dm"]) == \
+        ["psredit", "-qc", "-c", "name,dm", "obs.ar"]
+    argv = psa.psredit_set_cmd("psredit", "obs.ar", {"name": "J0437-4715", "dm": "2.644"})
+    assert argv == ["psredit", "-c", "name=J0437-4715,dm=2.644", "-e", "edit", "obs.ar"]
+
+
+def test_psredit_key_ok():
+    assert psa.psredit_key_ok("name")
+    assert psa.psredit_key_ok("dm")
+    assert psa.psredit_key_ok("int:mjd")
+    assert psa.psredit_key_ok("int[0]:wt")
+    assert psa.psredit_key_ok("int[2,5-]:duration")
+    assert psa.psredit_key_ok("aux:rmc")
+    assert not psa.psredit_key_ok("na me")
+    assert not psa.psredit_key_ok("a;b")
+    assert not psa.psredit_key_ok("")
+    assert not psa.psredit_key_ok("key=value")
+    assert not psa.psredit_key_ok("9start")

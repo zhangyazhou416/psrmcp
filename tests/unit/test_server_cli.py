@@ -39,7 +39,7 @@ def test_build_registry_yields_twenty(tmp_path):
     cfg.server.workspace = tmp_path / "ws"
     ctx = build_context(cfg)
     reg = build_registry(ctx)
-    assert len(reg.names()) == 20
+    assert len(reg.names()) == 23
 
     server = create_server(cfg)
     assert server.pulsar_registry is not None

@@ -1,4 +1,5 @@
-"""archive_inspect / archive_convert / archive_merge (TOOLS.md 5.7-5.9)."""
+"""archive_inspect / archive_convert / archive_merge / archive_transform /
+archive_edit (TOOLS.md 5.7-5.11)."""
 
 from __future__ import annotations
 
@@ -14,11 +15,19 @@ from ..errors import ErrorCode, PsrmcpError, env_missing, format_unsupported
 from ..execution.runner import CancelHook
 from ..execution.workspace import utcnow
 from ..models.common import ArtifactKind, WarningInfo
-from ..models.inputs import ArchiveConvertInput, ArchiveInspectInput, ArchiveMergeInput
+from ..models.inputs import (
+    ArchiveConvertInput,
+    ArchiveEditInput,
+    ArchiveInspectInput,
+    ArchiveMergeInput,
+    ArchiveTransformInput,
+)
 from ..models.results import (
     ArchiveConvertResult,
+    ArchiveEditResult,
     ArchiveInspectResult,
     ArchiveMergeResult,
+    ArchiveTransformResult,
     Dimensions,
     IntegrationRow,
     ObservationInfo,
@@ -53,6 +62,21 @@ def register(reg: ToolRegistry) -> None:
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False),
         handler=_merge,
         long_task=True,
+    ))
+    reg.add(ToolSpec(
+        name="archive_transform",
+        description="Scrunch or clean a folded archive: reduce frequency channels / sub-integrations / phase bins, sum polarisations, remove the baseline, or centre the profile. Targets are final counts; an integral factor is derived automatically (infeasible targets are skipped with a warning). The input is never modified — output is a new artifact. Long task; supports async and cancellation.",
+        input_model=ArchiveTransformInput,
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False),
+        handler=_transform,
+        long_task=True,
+    ))
+    reg.add(ToolSpec(
+        name="archive_edit",
+        description="Query and/or set archive metadata via psredit (e.g. name, dm, freq, bw, int:mjd). Query values are read from the input archive; set assignments are written to a new artifact (the input stays untouched).",
+        input_model=ArchiveEditInput,
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False),
+        handler=_edit,
     ))
 
 
@@ -253,6 +277,169 @@ async def _merge(ctx: AppContext, inp: ArchiveMergeInput, progress) -> ArchiveMe
         pass
     progress("complete", 1.0)
     return ArchiveMergeResult(artifact=ref, n_inputs=len(resolved), dimensions=dims, warnings=warnings)
+
+
+async def _transform(ctx: AppContext, inp: ArchiveTransformInput, progress) -> ArchiveTransformResult:
+    started = utcnow()
+    t0 = time.monotonic()
+    psr_info = await ctx.backends.require("psrchive")
+    binary = _tool(ctx, "pam")
+    resolved = ctx.resolver.resolve(inp.archive, root=inp.root, what="archive")
+
+    # Probe original dimensions so count targets can be turned into the
+    # integral scrunch factors pam expects (same convention as
+    # profile_standardize). Infeasible targets are skipped with a warning.
+    orig = await _vap_meta_dims(ctx, resolved.resolved)
+    warnings: list[WarningInfo] = []
+
+    def _factor(target: int | None, current: int | None, what: str) -> int | None:
+        if target is None:
+            return None
+        if not current:
+            warnings.append(WarningInfo(
+                code="W_DIMENSIONS_UNKNOWN",
+                message=f"{what}: original dimensions unknown, target {target} not applied",
+                severity="warning",
+            ))
+            return None
+        if target > current:
+            warnings.append(WarningInfo(
+                code="W_TARGET_LARGER",
+                message=f"{what}: target {target} exceeds original {current}; skipped (scrunching cannot increase resolution)",
+                severity="warning",
+            ))
+            return None
+        if current % target:
+            warnings.append(WarningInfo(
+                code="W_FACTOR_INFEASIBLE",
+                message=f"{what}: target {target} is not an integral divisor of original {current}; skipped",
+                severity="warning",
+            ))
+            return None
+        return current // target
+
+    freq_factor = _factor(inp.fscrunch_to, orig.get("nchan"), "fscrunch_to")
+    time_factor = _factor(inp.tscrunch_to, orig.get("nsubint"), "tscrunch_to")
+    bin_factor = _factor(inp.binscrunch_to, orig.get("nbin"), "binscrunch_to")
+
+    job_tmp = ctx.ws.new_job_tmp(f"tr_{int(time.time() * 1000)}")
+    local_src = job_tmp / "transform_src.ar"
+    shutil.copy2(resolved.resolved, local_src)
+    argv = psa.pam_scrunch_cmd(
+        binary, str(local_src), "tr",
+        freq_factor=freq_factor, time_factor=time_factor, sum_pols=inp.sum_pols,
+        bin_factor=bin_factor, remove_baseline=inp.remove_baseline, centre=inp.centre,
+    )
+    progress("transforming", 0.4)
+    run = await ctx.runner.run(
+        argv, cwd=job_tmp, timeout_s=ctx.cfg.server.job_timeout_s, cancel=CancelHook()
+    )
+    out_path = job_tmp / "transform_src.tr"
+    if run.exit_code != 0 or not out_path.exists():
+        log_id = log_artifact_from_stderr(ctx, job_key="pam", stderr=run.stderr_tail(), argv=argv)
+        raise PsrmcpError(
+            ErrorCode.PROCESS_FAILED,
+            f"pam failed (exit code {run.exit_code}): {run.stderr_tail(300)}",
+            log_artifact_id=log_id,
+        )
+
+    dims = await _vap_meta_dims(ctx, out_path) or Dimensions(nsubint=0, nchan=0, npol=0, nbin=0)
+    prov = make_provenance(
+        tool="archive_transform",
+        backend="pam",
+        backend_version=psr_info.version,
+        params=inp.model_dump(mode="json"),
+        started=started,
+        duration_s=time.monotonic() - t0,
+        command=argv,
+    )
+    ref = ctx.store.commit(
+        src_path=out_path,
+        filename=(inp.output_name or "transformed") + ".ar",
+        kind=ArtifactKind.ARCHIVE,
+        format_name="PSRARCHIVE",
+        provenance=prov,
+        parents=[resolved.artifact_id] if resolved.artifact_id else None,
+    )
+    progress("complete", 1.0)
+    return ArchiveTransformResult(artifact=ref, dimensions=dims, warnings=warnings)
+
+
+async def _edit(ctx: AppContext, inp: ArchiveEditInput, progress) -> ArchiveEditResult:
+    started = utcnow()
+    t0 = time.monotonic()
+    psr_info = await ctx.backends.require("psrchive")
+    binary = _tool(ctx, "psredit")
+    resolved = ctx.resolver.resolve(inp.archive, root=inp.root, what="archive")
+    warnings: list[WarningInfo] = []
+
+    values: dict[str, object] = {}
+    if inp.query:
+        argv_q = psa.psredit_get_cmd(binary, str(resolved.resolved), inp.query)
+        run = await ctx.runner.run(argv_q, timeout_s=120.0)
+        if run.exit_code != 0:
+            log_id = log_artifact_from_stderr(ctx, job_key="psredit", stderr=run.stderr_tail(), argv=argv_q)
+            raise PsrmcpError(
+                ErrorCode.PROCESS_FAILED,
+                f"psredit query failed (exit code {run.exit_code}): {run.stderr_tail(300)}",
+                log_artifact_id=log_id,
+            )
+        values = psa.parse_psrstat(run.stdout_text)
+        for k in ("_filename", "_positional"):
+            values.pop(k, None)
+        missing = [k for k in inp.query if k not in values]
+        if missing:
+            warnings.append(WarningInfo(
+                code="W_KEYS_UNRESOLVED",
+                message=f"query keys not returned by psredit: {', '.join(missing)}",
+                severity="warning",
+            ))
+
+    artifact = None
+    if inp.set:
+        job_tmp = ctx.ws.new_job_tmp(f"edit_{int(time.time() * 1000)}")
+        local_src = job_tmp / "edit_src.ar"
+        shutil.copy2(resolved.resolved, local_src)
+        argv_s = psa.psredit_set_cmd(binary, str(local_src), inp.set)
+        progress("editing", 0.4)
+        run = await ctx.runner.run(argv_s, cwd=job_tmp, timeout_s=1800.0)
+        out_path = job_tmp / "edit_src.edit"
+        if run.exit_code != 0 or not out_path.exists():
+            log_id = log_artifact_from_stderr(ctx, job_key="psredit", stderr=run.stderr_tail(), argv=argv_s)
+            raise PsrmcpError(
+                ErrorCode.PROCESS_FAILED,
+                f"psredit failed (exit code {run.exit_code}): {run.stderr_tail(300)}",
+                log_artifact_id=log_id,
+            )
+        prov = make_provenance(
+            tool="archive_edit",
+            backend="psredit",
+            backend_version=psr_info.version,
+            params=inp.model_dump(mode="json"),
+            started=started,
+            duration_s=time.monotonic() - t0,
+            command=argv_s,
+        )
+        artifact = ctx.store.commit(
+            src_path=out_path,
+            filename=(inp.output_name or "edited") + ".ar",
+            kind=ArtifactKind.ARCHIVE,
+            format_name="PSRARCHIVE",
+            provenance=prov,
+            parents=[resolved.artifact_id] if resolved.artifact_id else None,
+        )
+
+    return ArchiveEditResult(artifact=artifact, values=values, warnings=warnings)
+
+
+async def _vap_meta_dims(ctx: AppContext, path: Path) -> dict[str, int]:
+    """Best-effort dimension probe via vap; returns {} when unavailable."""
+    try:
+        vap = await ctx.runner.run(psa.vap_cmd(_tool(ctx, "vap"), str(path)), timeout_s=120.0)
+        meta = psa.parse_vap(vap.stdout_text)
+        return {k: int(meta.get(k) or 0) for k in ("nsubint", "nchan", "npol", "nbin")}
+    except PsrmcpError:
+        return {}
 
 
 # ---------------------------------------------------------------------------

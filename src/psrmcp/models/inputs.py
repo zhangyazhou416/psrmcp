@@ -1,4 +1,4 @@
-"""Input models for all 20 tools (TOOLS.md section 5 schemas, 1:1).
+"""Input models for all 23 tools (TOOLS.md section 5 schemas, 1:1).
 
 All models forbid extra properties, mirroring `additionalProperties: false`.
 """
@@ -149,6 +149,63 @@ class ArchiveMergeInput(BaseModel):
     execution_mode: ExecutionMode = ExecutionMode.AUTO
 
 
+class ArchiveTransformInput(BaseModel):
+    """Scrunch / clean a folded archive (pam). At least one operation is
+    required; the input file is never modified — the result is a new artifact.
+    Scrunch targets are given as FINAL counts; an integral reduction factor is
+    derived from the original dimensions (infeasible targets are skipped with
+    a warning, following profile_standardize's convention)."""
+
+    model_config = FORBID
+    archive: str
+    root: str | None = None
+    fscrunch_to: int | None = Field(default=None, ge=1, le=8192)
+    tscrunch_to: int | None = Field(default=None, ge=1, le=10000)
+    sum_pols: bool = False
+    binscrunch_to: int | None = Field(default=None, ge=1, le=1048576)
+    remove_baseline: bool = False
+    centre: bool = False
+    output_name: str | None = Field(default=None, max_length=128)
+    execution_mode: ExecutionMode = ExecutionMode.AUTO
+
+    @model_validator(mode="after")
+    def _check(self) -> "ArchiveTransformInput":
+        ops = (self.fscrunch_to is not None, self.tscrunch_to is not None,
+               self.sum_pols, self.binscrunch_to is not None,
+               self.remove_baseline, self.centre)
+        if not any(ops):
+            raise ValueError("at least one transform operation is required")
+        return self
+
+
+class ArchiveEditInput(BaseModel):
+    """Query and/or set archive metadata via psredit. `query` keys report
+    values from the INPUT archive (pre-edit); `set` assignments are written to
+    a new artifact. Key syntax: colon-separated attribute paths with optional
+    [index] selectors (e.g. name, dm, int:mjd, int[0]:wt)."""
+
+    model_config = FORBID
+    archive: str
+    root: str | None = None
+    query: list[str] = Field(default_factory=list, max_length=64)
+    set: dict[str, str] = Field(default_factory=dict, max_length=64)
+    output_name: str | None = Field(default=None, max_length=128)
+
+    @model_validator(mode="after")
+    def _check(self) -> "ArchiveEditInput":
+        from ..adapters.psrchive import psredit_key_ok
+
+        for key in self.query:
+            if not psredit_key_ok(key):
+                raise ValueError(f"invalid psredit query key: {key!r}")
+        for key in self.set:
+            if not psredit_key_ok(key):
+                raise ValueError(f"invalid psredit assignment key: {key!r}")
+        if not self.query and not self.set:
+            raise ValueError("at least one of query or set is required")
+        return self
+
+
 class DedisperseInput(BaseModel):
     model_config = FORBID
     input: str
@@ -218,6 +275,29 @@ class ProfileMeasureInput(BaseModel):
     metrics: list[str] = Field(default=["snr", "width"], max_length=5)
     generate_plot: bool = True
     plot_type: Literal["profile", "phase_frequency"] = "profile"
+
+
+class ProfileOptimizeInput(BaseModel):
+    """Search period and DM for the maximum profile S/N (pdmp). Offsets/
+    ranges/steps follow pdmp's semantics: trials run over
+    reference + offset +/- half_range stepping by step; None ranges use
+    pdmp's natural defaults. The input archive is read-only; results are
+    reported as corrections to apply (no archive is written)."""
+
+    model_config = FORBID
+    archive: str
+    root: str | None = None
+    dm_offset: float = 0.0
+    dm_half_range: float | None = Field(default=None, ge=0)
+    dm_step: float | None = Field(default=None, gt=0)
+    period_ms: float | None = Field(default=None, gt=0)
+    period_offset_us: float = 0.0
+    period_half_range_us: float | None = Field(default=None, ge=0)
+    period_step_us: float | None = Field(default=None, gt=0)
+    max_channels: int | None = Field(default=None, ge=1, le=8192)
+    max_subints: int | None = Field(default=None, ge=1, le=10000)
+    standard_profile: str | None = None
+    execution_mode: ExecutionMode = ExecutionMode.AUTO
 
 
 class ToaExtractInput(BaseModel):

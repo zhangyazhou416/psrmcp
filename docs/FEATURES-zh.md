@@ -2,7 +2,7 @@
 
 [English](FEATURES.md) | 简体中文
 
-psrmcp 把脉冲星射电天文的专业处理软件栈(**dspsr / PSRCHIVE / tempo2 / psrcat / PINT**)封装成 MCP 服务器,让 AI 助手(Claude Code、Claude Desktop 等)能直接、安全地驱动它们,完成从原始观测数据到计时分析报告的完整流程。AI 不需要记忆各软件的命令行 flag,而是调用 20 个面向任务的高层工具;所有结果结构化、可溯源。
+psrmcp 把脉冲星射电天文的专业处理软件栈(**dspsr / PSRCHIVE / tempo2 / psrcat / PINT**)封装成 MCP 服务器,让 AI 助手(Claude Code、Claude Desktop 等)能直接、安全地驱动它们,完成从原始观测数据到计时分析报告的完整流程。AI 不需要记忆各软件的命令行 flag,而是调用 23 个面向任务的高层工具;所有结果结构化、可溯源。
 
 设计原则:**面向任务、参数受控、结果结构化、全程可追溯**(架构见 [DESIGN.md](DESIGN.md),逐工具 Schema 见 [TOOLS.md](TOOLS.md))。
 
@@ -18,7 +18,7 @@ psrmcp 把脉冲星射电天文的专业处理软件栈(**dspsr / PSRCHIVE / tem
 
 后端缺失时服务器不崩溃:`pulsar_environment` 逐个报告 available/reason,依赖缺失后端的工具返回 `E_ENV_MISSING` 与提示。
 
-## 20 个工具(按处理链路分组)
+## 23 个工具(按处理链路分组)
 
 **环境与数据发现**
 
@@ -43,6 +43,8 @@ psrmcp 把脉冲星射电天文的专业处理软件栈(**dspsr / PSRCHIVE / tem
 | `archive_inspect` | 头信息与维度(nbin/nchan/npol/nsubint/频带) |
 | `archive_convert` | PSRFITS ↔ PSRARCHIVE ↔ filterbank 格式转换 |
 | `archive_merge` | 多 archive 合并(psradd) |
+| `archive_transform` ⏱ | 堆积/清理:缩通道/缩子积分/缩 bin、合并偏振、去基线、居中(pam),目标计数自动推导整数因子 |
+| `archive_edit` | psredit 元数据查询/修改(名字、DM、频率、带宽、子积分 MJD 等),写入新产物 |
 
 **消色散**
 
@@ -63,6 +65,7 @@ psrmcp 把脉冲星射电天文的专业处理软件栈(**dspsr / PSRCHIVE / tem
 |---|---|
 | `profile_standardize` | 归一化/对齐到标准轮廓,输出轮廓图 |
 | `profile_measure` | SNR、W50/W10 脉宽、峰值流量等测量,附 matplotlib 轮廓图 |
+| `profile_optimize` ⏱ | pdmp 搜索最优周期与 DM(以 S/N 最大为准),报告改正量与误差,输入只读 |
 
 **计时**
 
@@ -113,5 +116,5 @@ timing_diagnose      诊断:离群 TOA、是否需要 DMX/JUMP
 
 - [TUTORIAL.md](TUTORIAL.md) — 使用教程(从安装到完整处理链实战)
 - [DESIGN.md](DESIGN.md) — 架构与执行模型
-- [TOOLS.md](TOOLS.md) — 20 个工具的完整 JSON Schema 契约
+- [TOOLS.md](TOOLS.md) — 23 个工具的完整 JSON Schema 契约
 - [INSTALL.md](INSTALL.md) — 软件栈一键安装

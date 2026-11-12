@@ -6,10 +6,10 @@ An MCP (Model Context Protocol) server wrapping the pulsar astronomy software st
 
 Repositories: <https://gitlab.com/zhangyazhou416/psrmcp> · <https://github.com/zhangyazhou416/psrmcp>
 
-- Overview: [docs/FEATURES.md](https://github.com/zhangyazhou416/psrmcp/blob/main/docs/FEATURES.md) (what it does, all 20 tools)
+- Overview: [docs/FEATURES.md](https://github.com/zhangyazhou416/psrmcp/blob/main/docs/FEATURES.md) (what it does, all 23 tools)
 - Tutorial: [docs/TUTORIAL.md](https://github.com/zhangyazhou416/psrmcp/blob/main/docs/TUTORIAL.md) (setup, MCP clients, a full processing-chain walkthrough)
 - Design: [docs/DESIGN.md](https://github.com/zhangyazhou416/psrmcp/blob/main/docs/DESIGN.md)
-- Tool contracts: [docs/TOOLS.md](https://github.com/zhangyazhou416/psrmcp/blob/main/docs/TOOLS.md) (input/output schemas for all 20 tools)
+- Tool contracts: [docs/TOOLS.md](https://github.com/zhangyazhou416/psrmcp/blob/main/docs/TOOLS.md) (input/output schemas for all 23 tools)
 - One-click software stack installer: [scripts/install_pulsar_stack.sh](https://github.com/zhangyazhou416/psrmcp/blob/main/scripts/install_pulsar_stack.sh) (builds everything into `~/.pulsar`, see [docs/INSTALL.md](https://github.com/zhangyazhou416/psrmcp/blob/main/docs/INSTALL.md))
 - Chinese versions of all five docs live alongside as `docs/*-zh.md`
 

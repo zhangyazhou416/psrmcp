@@ -410,11 +410,14 @@ MCP `tools/call` 返回：
 | `archive_inspect` | true | false | true | false | 否 |
 | `archive_convert` | false | false | true | false | 否 |
 | `archive_merge` | false | false | true | false | 是 |
+| `archive_transform` | false | false | true | false | 是 |
+| `archive_edit` | false | false | true | false | 否 |
 | `dedisperse` | false | false | true | false | 是 |
 | `rfi_scan` | true | false | true | false | 否 |
 | `rfi_zap` | false | false | true | false | 否 |
 | `profile_standardize` | false | false | true | false | 否 |
 | `profile_measure` | true | false | true | false | 否 |
+| `profile_optimize` | true | false | true | false | 是 |
 | `toa_extract` | false | false | true | false | 是 |
 | `timing_fit` | false | false | true | false | 是 |
 | `timing_diagnose` | true | false | true | false | 否 |
@@ -1251,7 +1254,136 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.10 `dedisperse`
+### 5.10 `archive_transform`
+
+**用途**：堆积/清理已折叠的 archive——缩减频率通道 / 子积分 / 相位 bin、合并偏振、去除脉冲星外基线、或将轮廓居中。目标以最终计数给出，程序按原始维度自动推导整数缩减因子（不可整除的目标会跳过并给出警告）。输入文件永不被修改，输出为新 artifact。
+
+**后端**：pam  
+**长任务**：是  
+**Annotations**：`readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### 输入 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/archive_transform.input.json",
+  "type": "object",
+  "required": ["archive"],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Artifact ID or relative path under a read root"
+    },
+    "root": {"type": "string"},
+    "fscrunch_to": {"type": "integer", "minimum": 1, "maximum": 8192},
+    "tscrunch_to": {"type": "integer", "minimum": 1, "maximum": 10000},
+    "sum_pols": {"type": "boolean", "default": false},
+    "binscrunch_to": {"type": "integer", "minimum": 1, "maximum": 1048576},
+    "remove_baseline": {"type": "boolean", "default": false},
+    "centre": {"type": "boolean", "default": false},
+    "output_name": {"type": "string", "maxLength": 128},
+    "execution_mode": {"enum": ["auto", "sync", "async"], "default": "auto"}
+  },
+  "additionalProperties": false
+}
+```
+
+#### 输出 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/archive_transform.output.json",
+  "type": "object",
+  "required": ["result_type", "artifact", "dimensions", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "artifact": {"$ref": "#/$defs/ArtifactRef"},
+    "dimensions": {"$ref": "#/$defs/Dimensions"},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 错误码
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`, `E_QUOTA_EXCEEDED`
+
+---
+
+### 5.11 `archive_edit`
+
+**用途**：通过 psredit 查询和/或修改 archive 元数据（如 `name`、`dm`、`freq`、`bw`、`int:mjd`、`int[0]:wt`）。查询值读自输入 archive（编辑前）；`set` 赋值写入新 artifact——输入保持不变。
+
+**后端**：psredit  
+**长任务**：否  
+**Annotations**：`readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### 输入 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/archive_edit.input.json",
+  "type": "object",
+  "required": ["archive"],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Artifact ID or relative path under a read root"
+    },
+    "root": {"type": "string"},
+    "query": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {"type": "string"},
+      "description": "psredit attribute paths to read from the input archive (e.g. name, dm, int:mjd)"
+    },
+    "set": {
+      "type": "object",
+      "maxProperties": 64,
+      "additionalProperties": {"type": "string"},
+      "description": "psredit assignments written to the output artifact (e.g. {\"dm\": \"2.644\"})"
+    },
+    "output_name": {"type": "string", "maxLength": 128}
+  },
+  "additionalProperties": false
+}
+```
+
+#### 输出 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/archive_edit.output.json",
+  "type": "object",
+  "required": ["result_type", "values", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "artifact": {"anyOf": [{"$ref": "#/$defs/ArtifactRef"}, {"type": "null"}]},
+    "values": {"type": "object", "additionalProperties": true},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 错误码
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+### 5.12 `dedisperse`
 
 **用途**：使用 dspsr 对数据进行相干或非相干消色散并折叠。相干消色散需要匹配的 ephemeris。
 
@@ -1372,7 +1504,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.11 `rfi_scan`
+### 5.13 `rfi_scan`
 
 **用途**：分析 archive 的通道统计，给出建议的坏通道掩膜。只读，不修改数据。
 
@@ -1451,7 +1583,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.12 `rfi_zap`
+### 5.14 `rfi_zap`
 
 **用途**：对 archive 应用通道掩膜，生成新的 archive。支持显式通道列表或自动方法。
 
@@ -1554,7 +1686,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.13 `profile_standardize`
+### 5.15 `profile_standardize`
 
 **用途**：从 archive 生成标准轮廓，供 TOA 提取使用。
 
@@ -1617,7 +1749,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.14 `profile_measure`
+### 5.16 `profile_measure`
 
 **用途**：测量 archive 的轮廓指标，例如 S/N、FWHM、流量和偏振参数。只读。
 
@@ -1706,7 +1838,75 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.15 `toa_extract`
+### 5.17 `profile_optimize`
+
+**用途**：以轮廓 S/N 最大为目标搜索周期与 DM（pdmp）。以改正量形式报告最优周期（ms）与 DM 及其不确定度；输入 archive 永不被修改。
+
+**后端**：pdmp  
+**长任务**：是  
+**Annotations**：`readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### 输入 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/profile_optimize.input.json",
+  "type": "object",
+  "required": ["archive"],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Artifact ID or relative path under a read root"
+    },
+    "root": {"type": "string"},
+    "dm_offset": {"type": "number", "default": 0.0},
+    "dm_half_range": {"type": "number", "minimum": 0},
+    "dm_step": {"type": "number", "exclusiveMinimum": 0},
+    "period_ms": {"type": "number", "exclusiveMinimum": 0},
+    "period_offset_us": {"type": "number", "default": 0.0},
+    "period_half_range_us": {"type": "number", "minimum": 0},
+    "period_step_us": {"type": "number", "exclusiveMinimum": 0},
+    "max_channels": {"type": "integer", "minimum": 1, "maximum": 8192},
+    "max_subints": {"type": "integer", "minimum": 1, "maximum": 10000},
+    "standard_profile": {"type": "string"},
+    "execution_mode": {"enum": ["auto", "sync", "async"], "default": "auto"}
+  },
+  "additionalProperties": false
+}
+```
+
+#### 输出 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/profile_optimize.output.json",
+  "type": "object",
+  "required": ["result_type", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "best_period_ms": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    "period_error_ms": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    "best_dm": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    "dm_error": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    "best_snr": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 错误码
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+### 5.18 `toa_extract`
 
 **用途**：使用标准轮廓从 archive 提取 TOA，生成 TEMPO `.tim` 文件。
 
@@ -1814,7 +2014,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.16 `timing_fit`
+### 5.19 `timing_fit`
 
 **用途**：使用 PINT 或 tempo2 对 `.par` + `.tim` 做计时拟合，返回更新后的 `.par`、拟合统计、残差和残差图。
 
@@ -1951,7 +2151,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.17 `timing_diagnose`
+### 5.20 `timing_diagnose`
 
 **用途**：对已有 `.par` + `.tim` 做残差和模型诊断，不重新拟合。可检查离群点、DM 变化、JUMP 和残差分布。
 
@@ -2070,7 +2270,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.18 `artifact_list`
+### 5.21 `artifact_list`
 
 **用途**：列出当前工作区的 artifact，支持按类型、时间和游标分页。
 
@@ -2142,7 +2342,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.19 `job_get`
+### 5.22 `job_get`
 
 **用途**：查询异步任务状态和结果。仅在客户端不支持 MCP Tasks 扩展时作为兜底使用。
 
@@ -2190,7 +2390,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.20 `job_cancel`
+### 5.23 `job_cancel`
 
 **用途**：请求取消异步任务。取消是协作式的：服务器先发送 `SIGTERM`，宽限期后如仍运行则 `SIGKILL` 进程组。
 

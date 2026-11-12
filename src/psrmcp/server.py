@@ -44,7 +44,7 @@ def build_registry(ctx) -> ToolRegistry:
 
 
 def create_server(cfg: Config):
-    """Assemble the low-level MCP Server with all 20 tools / resources / prompts.
+    """Assemble the low-level MCP Server with all 23 tools / resources / prompts.
 
     SDK >= 2 takes handler callables in the constructor (the decorator API is
     gone): on_list_tools / on_call_tool / on_list_resources / on_read_resource /

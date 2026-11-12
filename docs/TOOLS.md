@@ -410,11 +410,14 @@ The following `$defs` are referenced by all tool schemas. Implementations may ge
 | `archive_inspect` | true | false | true | false | no |
 | `archive_convert` | false | false | true | false | no |
 | `archive_merge` | false | false | true | false | yes |
+| `archive_transform` | false | false | true | false | yes |
+| `archive_edit` | false | false | true | false | no |
 | `dedisperse` | false | false | true | false | yes |
 | `rfi_scan` | true | false | true | false | no |
 | `rfi_zap` | false | false | true | false | no |
 | `profile_standardize` | false | false | true | false | no |
 | `profile_measure` | true | false | true | false | no |
+| `profile_optimize` | true | false | true | false | yes |
 | `toa_extract` | false | false | true | false | yes |
 | `timing_fit` | false | false | true | false | yes |
 | `timing_diagnose` | true | false | true | false | no |
@@ -1251,7 +1254,136 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.10 `dedisperse`
+### 5.10 `archive_transform`
+
+**Purpose**: Scrunch or clean a folded archive — reduce frequency channels / sub-integrations / phase bins, sum polarisations, remove the off-pulse baseline, or centre the profile. Targets are given as final counts; an integral scrunch factor is derived from the original dimensions (infeasible targets are skipped with a warning). The input file is never modified; the result is a new artifact.
+
+**Backend**: pam  
+**Long-running**: yes  
+**Annotations**: `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### Input Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/archive_transform.input.json",
+  "type": "object",
+  "required": ["archive"],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Artifact ID or relative path under a read root"
+    },
+    "root": {"type": "string"},
+    "fscrunch_to": {"type": "integer", "minimum": 1, "maximum": 8192},
+    "tscrunch_to": {"type": "integer", "minimum": 1, "maximum": 10000},
+    "sum_pols": {"type": "boolean", "default": false},
+    "binscrunch_to": {"type": "integer", "minimum": 1, "maximum": 1048576},
+    "remove_baseline": {"type": "boolean", "default": false},
+    "centre": {"type": "boolean", "default": false},
+    "output_name": {"type": "string", "maxLength": 128},
+    "execution_mode": {"enum": ["auto", "sync", "async"], "default": "auto"}
+  },
+  "additionalProperties": false
+}
+```
+
+#### Output Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/archive_transform.output.json",
+  "type": "object",
+  "required": ["result_type", "artifact", "dimensions", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "artifact": {"$ref": "#/$defs/ArtifactRef"},
+    "dimensions": {"$ref": "#/$defs/Dimensions"},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Error Codes
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`, `E_QUOTA_EXCEEDED`
+
+---
+
+### 5.11 `archive_edit`
+
+**Purpose**: Query and/or set archive metadata through psredit (e.g. `name`, `dm`, `freq`, `bw`, `int:mjd`, `int[0]:wt`). Query values are read from the input archive (pre-edit); `set` assignments are written to a new artifact — the input stays untouched.
+
+**Backend**: psredit  
+**Long-running**: no  
+**Annotations**: `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### Input Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/archive_edit.input.json",
+  "type": "object",
+  "required": ["archive"],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Artifact ID or relative path under a read root"
+    },
+    "root": {"type": "string"},
+    "query": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {"type": "string"},
+      "description": "psredit attribute paths to read from the input archive (e.g. name, dm, int:mjd)"
+    },
+    "set": {
+      "type": "object",
+      "maxProperties": 64,
+      "additionalProperties": {"type": "string"},
+      "description": "psredit assignments written to the output artifact (e.g. {\"dm\": \"2.644\"})"
+    },
+    "output_name": {"type": "string", "maxLength": 128}
+  },
+  "additionalProperties": false
+}
+```
+
+#### Output Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/archive_edit.output.json",
+  "type": "object",
+  "required": ["result_type", "values", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "artifact": {"anyOf": [{"$ref": "#/$defs/ArtifactRef"}, {"type": "null"}]},
+    "values": {"type": "object", "additionalProperties": true},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Error Codes
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+### 5.12 `dedisperse`
 
 **Purpose**: Applies coherent or incoherent dedispersion and folds the data with dspsr. Coherent dedispersion requires a matching ephemeris.
 
@@ -1372,7 +1504,7 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.11 `rfi_scan`
+### 5.13 `rfi_scan`
 
 **Purpose**: Analyses per-channel statistics of an archive and produces a suggested bad-channel mask. Read-only; does not modify data.
 
@@ -1451,7 +1583,7 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.12 `rfi_zap`
+### 5.14 `rfi_zap`
 
 **Purpose**: Applies a channel mask to an archive, producing a new archive. Supports an explicit channel list or an automatic method.
 
@@ -1554,7 +1686,7 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.13 `profile_standardize`
+### 5.15 `profile_standardize`
 
 **Purpose**: Produces a standard profile from an archive for use in TOA extraction.
 
@@ -1617,7 +1749,7 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.14 `profile_measure`
+### 5.16 `profile_measure`
 
 **Purpose**: Measures profile metrics of an archive, such as S/N, FWHM, flux density, and polarization parameters. Read-only.
 
@@ -1706,7 +1838,75 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.15 `toa_extract`
+### 5.17 `profile_optimize`
+
+**Purpose**: Search period and DM for the maximum profile S/N (pdmp). Reports the best period (ms) and DM with uncertainties as corrections to apply; the input archive is never modified.
+
+**Backend**: pdmp  
+**Long-running**: yes  
+**Annotations**: `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### Input Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/profile_optimize.input.json",
+  "type": "object",
+  "required": ["archive"],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Artifact ID or relative path under a read root"
+    },
+    "root": {"type": "string"},
+    "dm_offset": {"type": "number", "default": 0.0},
+    "dm_half_range": {"type": "number", "minimum": 0},
+    "dm_step": {"type": "number", "exclusiveMinimum": 0},
+    "period_ms": {"type": "number", "exclusiveMinimum": 0},
+    "period_offset_us": {"type": "number", "default": 0.0},
+    "period_half_range_us": {"type": "number", "minimum": 0},
+    "period_step_us": {"type": "number", "exclusiveMinimum": 0},
+    "max_channels": {"type": "integer", "minimum": 1, "maximum": 8192},
+    "max_subints": {"type": "integer", "minimum": 1, "maximum": 10000},
+    "standard_profile": {"type": "string"},
+    "execution_mode": {"enum": ["auto", "sync", "async"], "default": "auto"}
+  },
+  "additionalProperties": false
+}
+```
+
+#### Output Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/profile_optimize.output.json",
+  "type": "object",
+  "required": ["result_type", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "best_period_ms": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    "period_error_ms": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    "best_dm": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    "dm_error": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    "best_snr": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Error Codes
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+### 5.18 `toa_extract`
 
 **Purpose**: Extracts TOAs from an archive against a standard profile and produces a TEMPO `.tim` file.
 
@@ -1814,7 +2014,7 @@ Semantic validation:
 
 ---
 
-### 5.16 `timing_fit`
+### 5.19 `timing_fit`
 
 **Purpose**: Runs a timing fit on `.par` + `.tim` with PINT or tempo2, returning the updated `.par`, fit statistics, residuals, and residual plots.
 
@@ -1951,7 +2151,7 @@ Semantic validation:
 
 ---
 
-### 5.17 `timing_diagnose`
+### 5.20 `timing_diagnose`
 
 **Purpose**: Runs residual and model diagnostics on existing `.par` + `.tim` without refitting. Can check outliers, DM variations, JUMPs, and the residual distribution.
 
@@ -2070,7 +2270,7 @@ Semantic validation:
 
 ---
 
-### 5.18 `artifact_list`
+### 5.21 `artifact_list`
 
 **Purpose**: Lists artifacts in the current workspace, with paging by kind, time, and cursor.
 
@@ -2142,7 +2342,7 @@ Semantic validation:
 
 ---
 
-### 5.19 `job_get`
+### 5.22 `job_get`
 
 **Purpose**: Queries the status and result of an asynchronous job. Fallback used only when the client does not support the MCP Tasks extension.
 
@@ -2190,7 +2390,7 @@ Semantic validation:
 
 ---
 
-### 5.20 `job_cancel`
+### 5.23 `job_cancel`
 
 **Purpose**: Requests cancellation of an asynchronous job. Cancellation is cooperative: the server sends `SIGTERM` first, and `SIGKILL`s the process group if it is still running after the grace period.
 

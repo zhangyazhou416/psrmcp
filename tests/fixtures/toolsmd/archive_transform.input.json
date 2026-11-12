@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/archive_transform.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Artifact ID or relative path under a read root"
+    },
+    "root": {
+      "type": "string"
+    },
+    "fscrunch_to": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 8192
+    },
+    "tscrunch_to": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10000
+    },
+    "sum_pols": {
+      "type": "boolean",
+      "default": false
+    },
+    "binscrunch_to": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1048576
+    },
+    "remove_baseline": {
+      "type": "boolean",
+      "default": false
+    },
+    "centre": {
+      "type": "boolean",
+      "default": false
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}

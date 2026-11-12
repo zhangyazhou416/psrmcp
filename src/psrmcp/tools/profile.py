@@ -1,4 +1,4 @@
-"""profile_standardize / profile_measure (TOOLS.md 5.13-5.14)."""
+"""profile_standardize / profile_measure / profile_optimize (TOOLS.md 5.15-5.17)."""
 
 from __future__ import annotations
 
@@ -8,12 +8,18 @@ from mcp.types import ToolAnnotations
 
 from ..adapters import psrchive as psa
 from ..errors import ErrorCode, PsrmcpError
+from ..execution.runner import CancelHook
 from ..execution.workspace import utcnow
 from ..models.common import ArtifactKind, WarningInfo
-from ..models.inputs import ProfileMeasureInput, ProfileStandardizeInput
+from ..models.inputs import (
+    ProfileMeasureInput,
+    ProfileOptimizeInput,
+    ProfileStandardizeInput,
+)
 from ..models.results import (
     MeasureMetrics,
     ProfileMeasureResult,
+    ProfileOptimizeResult,
     ProfileStandardizeResult,
     WidthInfo,
 )
@@ -37,6 +43,14 @@ def register(reg: ToolRegistry) -> None:
         input_model=ProfileMeasureInput,
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
         handler=_measure,
+    ))
+    reg.add(ToolSpec(
+        name="profile_optimize",
+        description="Search period and DM for the maximum profile S/N (pdmp). Reports the best period (ms) and DM with uncertainties as corrections to apply; the input archive is never modified. Long task; supports async and cancellation.",
+        input_model=ProfileOptimizeInput,
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
+        handler=_optimize,
+        long_task=True,
     ))
 
 
@@ -219,3 +233,61 @@ def _plot_profile(ctx: AppContext, path, plot_type: str, warnings: list[WarningI
             severity="info",
         ))
         return None
+
+
+async def _optimize(ctx: AppContext, inp: ProfileOptimizeInput, progress) -> ProfileOptimizeResult:
+    started = utcnow()
+    t0 = time.monotonic()
+    psr_info = await ctx.backends.require("psrchive")
+    binary = _psrchive_tool(ctx, "pdmp")
+    resolved = ctx.resolver.resolve(inp.archive, root=inp.root, what="archive")
+    std = None
+    if inp.standard_profile is not None:
+        std = ctx.resolver.resolve(inp.standard_profile, root=inp.root, what="standard profile")
+
+    argv = psa.pdmp_cmd(
+        binary, str(resolved.resolved),
+        dm_offset=inp.dm_offset, dm_half_range=inp.dm_half_range, dm_step=inp.dm_step,
+        period_ms=inp.period_ms, period_offset_us=inp.period_offset_us,
+        period_half_range_us=inp.period_half_range_us, period_step_us=inp.period_step_us,
+        max_channels=inp.max_channels, max_subints=inp.max_subints,
+        std_profile=str(std.resolved) if std is not None else None,
+    )
+    progress("searching", 0.3)
+    run = await ctx.runner.run(
+        argv, timeout_s=ctx.cfg.server.job_timeout_s, cancel=CancelHook()
+    )
+    if run.exit_code != 0:
+        log_id = log_artifact_from_stderr(ctx, job_key="pdmp", stderr=run.stderr_tail(), argv=argv)
+        raise PsrmcpError(
+            ErrorCode.PROCESS_FAILED,
+            f"pdmp failed (exit code {run.exit_code}): {run.stderr_tail(300)}",
+            log_artifact_id=log_id,
+        )
+
+    parsed = psa.parse_pdmp(run.stdout_text)
+    warnings: list[WarningInfo] = []
+    if not parsed:
+        warnings.append(WarningInfo(
+            code="W_PDMP_UNPARSED",
+            message="no best-fit values could be parsed from pdmp output; inspect the raw stdout via the log artifact of a re-run",
+            severity="warning",
+        ))
+    prov = make_provenance(
+        tool="profile_optimize",
+        backend="pdmp",
+        backend_version=psr_info.version,
+        params=inp.model_dump(mode="json"),
+        started=started,
+        duration_s=time.monotonic() - t0,
+        command=argv,
+    )
+    _ = prov
+    return ProfileOptimizeResult(
+        best_period_ms=parsed.get("best_period_ms"),
+        period_error_ms=parsed.get("best_period_ms_error"),
+        best_dm=parsed.get("best_dm"),
+        dm_error=parsed.get("best_dm_error"),
+        best_snr=parsed.get("best_snr"),
+        warnings=warnings,
+    )

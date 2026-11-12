@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/profile_optimize.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Artifact ID or relative path under a read root"
+    },
+    "root": {
+      "type": "string"
+    },
+    "dm_offset": {
+      "type": "number",
+      "default": 0.0
+    },
+    "dm_half_range": {
+      "type": "number",
+      "minimum": 0
+    },
+    "dm_step": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "period_ms": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "period_offset_us": {
+      "type": "number",
+      "default": 0.0
+    },
+    "period_half_range_us": {
+      "type": "number",
+      "minimum": 0
+    },
+    "period_step_us": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "max_channels": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 8192
+    },
+    "max_subints": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10000
+    },
+    "standard_profile": {
+      "type": "string"
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}

@@ -2,7 +2,7 @@
 
 English | [简体中文](FEATURES-zh.md)
 
-psrmcp wraps the professional pulsar radio-astronomy processing stack (**dspsr / PSRCHIVE / tempo2 / psrcat / PINT**) as an MCP server, so AI assistants (Claude Code, Claude Desktop, etc.) can drive them directly and safely, covering the full pipeline from raw observation data to timing analysis reports. The AI does not need to memorize each package's command-line flags; instead it calls 20 task-oriented high-level tools, and every result is structured and traceable.
+psrmcp wraps the professional pulsar radio-astronomy processing stack (**dspsr / PSRCHIVE / tempo2 / psrcat / PINT**) as an MCP server, so AI assistants (Claude Code, Claude Desktop, etc.) can drive them directly and safely, covering the full pipeline from raw observation data to timing analysis reports. The AI does not need to memorize each package's command-line flags; instead it calls 23 task-oriented high-level tools, and every result is structured and traceable.
 
 Design principles: **task-oriented, controlled parameters, structured results, full traceability** (architecture in [DESIGN.md](DESIGN.md), per-tool schemas in [TOOLS.md](TOOLS.md)).
 
@@ -18,7 +18,7 @@ Design principles: **task-oriented, controlled parameters, structured results, f
 
 Missing backends do not crash the server: `pulsar_environment` reports available/reason for each one, and tools that depend on a missing backend return `E_ENV_MISSING` with a hint.
 
-## The 20 tools (grouped by processing pipeline)
+## The 23 tools (grouped by processing pipeline)
 
 **Environment and data discovery**
 
@@ -43,6 +43,8 @@ Missing backends do not crash the server: `pulsar_environment` reports available
 | `archive_inspect` | header info and dimensions (nbin/nchan/npol/nsubint/frequency band) |
 | `archive_convert` | PSRFITS ↔ PSRARCHIVE ↔ filterbank format conversion |
 | `archive_merge` | merge multiple archives (psradd) |
+| `archive_transform` ⏱ | scrunch/clean-up: shrink channels/subints/phase bins, sum polarizations, remove baseline, centre (pam); integer factors derived automatically from target counts |
+| `archive_edit` | psredit metadata query/edit (name, DM, frequency, bandwidth, sub-int MJD, etc.); edits are written to a new artifact |
 
 **Dedispersion**
 
@@ -63,6 +65,7 @@ Missing backends do not crash the server: `pulsar_environment` reports available
 |---|---|
 | `profile_standardize` | normalize/align to a standard profile and output a profile plot |
 | `profile_measure` | measurements such as SNR, W50/W10 pulse widths, and peak flux, with a matplotlib profile plot |
+| `profile_optimize` ⏱ | pdmp search for the best period and DM (maximizing S/N); reports corrections with errors; input stays read-only |
 
 **Timing**
 
@@ -113,5 +116,5 @@ The artifacts of every step (archives, .tim/.par, plots, logs) carry provenance 
 
 - [TUTORIAL.md](TUTORIAL.md) — usage tutorial (from installation to a full processing-chain walkthrough)
 - [DESIGN.md](DESIGN.md) — architecture and execution model
-- [TOOLS.md](TOOLS.md) — complete JSON Schema contracts for all 20 tools
+- [TOOLS.md](TOOLS.md) — complete JSON Schema contracts for all 23 tools
 - [INSTALL.md](INSTALL.md) — one-click installation of the software stack

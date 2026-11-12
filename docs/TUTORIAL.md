@@ -9,7 +9,7 @@ Two usage styles run throughout:
 1. **Natural-language driven (recommended)**: once Claude Code / Claude Desktop is connected, just describe what you need in plain language and the AI selects and chains the tools for you;
 2. **Direct invocation**: parameter examples for every tool are given alongside, so you can call them precisely from other MCP clients or scripts.
 
-Read first: [FEATURES.md](FEATURES.md) (what it does, all 20 tools at a glance); for field-by-field schemas see [TOOLS.md](TOOLS.md).
+Read first: [FEATURES.md](FEATURES.md) (what it does, all 23 tools at a glance); for field-by-field schemas see [TOOLS.md](TOOLS.md).
 
 ## 1. Installation
 
@@ -252,7 +252,7 @@ It outputs structured conclusions: a list of outlier TOAs (>5σ, MAD-based), an 
 
 ## 7. Prompting tips
 
-The AI is facing 20 tools with strict schemas, so **describe the goal, not the steps** — that usually works best:
+The AI is facing 23 tools with strict schemas, so **describe the goal, not the steps** — that usually works best:
 
 | What you say | What the AI does |
 |---|---|
@@ -300,5 +300,5 @@ PSRMCP_CONFIG=$PWD/config.toml uv run python scripts/live_check.py
 
 - [FEATURES.md](FEATURES.md) — feature overview
 - [DESIGN.md](DESIGN.md) — architecture and execution model
-- [TOOLS.md](TOOLS.md) — full JSON Schema contracts for all 20 tools
+- [TOOLS.md](TOOLS.md) — full JSON Schema contracts for all 23 tools
 - [INSTALL.md](INSTALL.md) — details of the one-click software stack installer
