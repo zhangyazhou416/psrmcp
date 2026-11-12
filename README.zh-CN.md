@@ -7,10 +7,10 @@
 仓库:<https://gitlab.com/zhangyazhou416/psrmcp>
 仓库:<https://github.com/zhangyazhou416/psrmcp>
 
-- 功能总览:[docs/FEATURES-zh.md](docs/FEATURES-zh.md)(能做什么、23 个工具一览)
+- 功能总览:[docs/FEATURES-zh.md](docs/FEATURES-zh.md)(能做什么、25 个工具一览)
 - 使用教程:[docs/TUTORIAL-zh.md](docs/TUTORIAL-zh.md)(安装配置、接入客户端、完整处理链实战)
 - 设计方案:[docs/DESIGN-zh.md](docs/DESIGN-zh.md)
-- 工具契约:[docs/TOOLS-zh.md](docs/TOOLS-zh.md)(23 个工具的输入/输出 Schema)
+- 工具契约:[docs/TOOLS-zh.md](docs/TOOLS-zh.md)(25 个工具的输入/输出 Schema)
 - 一键安装脉冲星软件栈:[scripts/install_pulsar_stack.sh](scripts/install_pulsar_stack.sh)(全源码编译进 `~/.pulsar`,详见 [docs/INSTALL-zh.md](docs/INSTALL-zh.md))
 
 ## 为什么需要 psrmcp?

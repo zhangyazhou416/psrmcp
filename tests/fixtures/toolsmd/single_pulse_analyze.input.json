@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/single_pulse_analyze.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Artifact ID or relative path under a read root"
+    },
+    "root": {
+      "type": "string"
+    },
+    "histograms": {
+      "type": "array",
+      "items": {
+        "enum": ["flux", "poldeg", "polang", "linear", "circular"],
+        "type": "string"
+      },
+      "maxItems": 5,
+      "default": []
+    },
+    "find_max_amplitude": {
+      "type": "boolean",
+      "default": false
+    },
+    "scatter_linear_pa": {
+      "type": "boolean",
+      "default": false
+    },
+    "find_pulses": {
+      "type": "boolean",
+      "default": false
+    },
+    "pulse_algorithm": {
+      "type": "string",
+      "default": "above"
+    },
+    "min_pulse_bins": {
+      "type": "integer",
+      "minimum": 16,
+      "maximum": 65536
+    },
+    "phase_ranges": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 2,
+      "maxItems": 16
+    },
+    "hist_bins": {
+      "type": "integer",
+      "minimum": 2,
+      "maximum": 10000
+    },
+    "flux_hist_max": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "pol_threshold": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "log_scale": {
+      "type": "boolean",
+      "default": false
+    },
+    "mean_offset": {
+      "type": "number"
+    },
+    "std_profile": {
+      "type": "string"
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}

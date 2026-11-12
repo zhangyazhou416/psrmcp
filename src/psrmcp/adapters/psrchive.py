@@ -123,11 +123,24 @@ def psrstat_cmd(binary: str, archive: str, expressions: list[str]) -> list[str]:
     return [binary, "-c", ",".join(expressions), archive]
 
 
-def psrconv_cmd(binary: str, source: str, out_dir: str, out_ext: str) -> list[str]:
+# psrconv -o names resolved via Archive::new_Archive (agent get_name):
+# "PSRFITS" / "Timer" / "ASCII". EPN is deliberately absent: in PSRCHIVE,
+# EPNArchive::unload is not implemented, so psrconv can read EPN but never
+# write it.
+PSRCONV_FORMAT: dict[str, str] = {
+    "psrfits": "PSRFITS",
+    "psrarchive": "Timer",
+    "ascii": "ASCII",
+}
+
+
+def psrconv_cmd(binary: str, source: str, out_ext: str, output_format: str) -> list[str]:
     # NOTE: psrconv writes <input-basename>.<ext> NEXT TO THE INPUT FILE — it
     # has no output-directory flag. Callers must copy the source into their job
-    # tmp dir and run there (out_dir parameter is used only as cwd by callers).
-    return [binary, "-e", out_ext, source]
+    # tmp dir and run there (the file lands in the process cwd).
+    # -o is passed explicitly: without it psrconv silently falls back to
+    # PSRFITS on cfitsio builds even when a Timer/ASCII output was intended.
+    return [binary, "-o", PSRCONV_FORMAT[output_format], "-e", out_ext, source]
 
 
 def psradd_cmd(binary: str, sources: list[str], out_path: str) -> list[str]:
@@ -303,3 +316,261 @@ def psredit_key_ok(key: str) -> bool:
     import re
 
     return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(\[[0-9,\-]+\])?(:[A-Za-z_][A-Za-z0-9_]*(\[[0-9,\-]+\])?)*", key))
+
+
+# ---------------------------------------------------------------------------
+# psrspa (single-pulse analysis)
+# ---------------------------------------------------------------------------
+
+# -a algorithm names accepted by the installed psrspa (ProfileWeightFunction
+# registry, per the builtin -help=algorithm text). The name may be followed
+# by ":option=value" configuration, e.g. "consecutive:threshold=4".
+SPA_ALGORITHMS: tuple[str, ...] = (
+    "above", "consecutive", "cumulative", "set", "exponential", "normal", "minimum",
+)
+
+
+def psrspa_algorithm_ok(algorithm: str) -> bool:
+    import re
+
+    return bool(re.fullmatch(
+        r"(above|consecutive|cumulative|set|exponential|normal|minimum)"
+        r"(:[A-Za-z0-9_]+=[A-Za-z0-9_.+-]+)*",
+        algorithm,
+    ))
+
+
+def psrspa_cmd(
+    binary: str,
+    source: str,
+    *,
+    histograms: tuple[str, ...] = (),
+    find_max_amplitude: bool = False,
+    scatter_linear_pa: bool = False,
+    find_pulses: bool = False,
+    pulse_algorithm: str = "above",
+    min_pulse_bins: int | None = None,
+    phase_ranges: tuple[float, ...] = (),
+    hist_bins: int | None = None,
+    flux_hist_max: float | None = None,
+    pol_threshold: float | None = None,
+    log_scale: bool = False,
+    mean_offset: float | None = None,
+    std_profile: str | None = None,
+    prefix: str = "spa",
+) -> list[str]:
+    # Histogram outputs are plain text (<prefix>_<type>_<bins>.dat in the
+    # process cwd); no PGPLOT is involved, so no plotting flag is needed.
+    args = [binary]
+    flag_for = {"flux": "-hf", "poldeg": "-hd", "polang": "-ha", "linear": "-hl", "circular": "-hc"}
+    for hist in histograms:
+        args.append(flag_for[hist])
+    if find_max_amplitude:
+        args.append("-fm")
+    if scatter_linear_pa:
+        args.append("-sla")
+    if find_pulses:
+        args += ["-a", pulse_algorithm]
+        if min_pulse_bins is not None:
+            args += ["-N", str(min_pulse_bins)]
+    if phase_ranges:
+        args += ["-pr", ",".join(f"{v:g}" for v in phase_ranges)]
+    if hist_bins is not None:
+        args += ["-b", str(hist_bins)]
+    if flux_hist_max is not None:
+        args += ["-F", str(flux_hist_max)]
+    if pol_threshold is not None:
+        args += ["-pt", str(pol_threshold)]
+    if log_scale:
+        args.append("-l")
+    if mean_offset is not None:
+        args += ["-m", str(mean_offset)]
+    if std_profile is not None:
+        args += ["-s", std_profile]
+    args += ["-pfix", prefix, "-e", "dat"]
+    args.append(source)
+    return args
+
+
+# Output file suffixes psrspa writes, keyed by what produced them. The file
+# name pattern is <prefix>_<type>_<bins>.dat (histograms) / <prefix>_maxamp.dat
+# / <prefix>_pulses.dat.
+SPA_HISTOGRAM_TYPES: tuple[str, ...] = ("flux", "poldeg", "polang", "linpol", "cirpol", "linvsang")
+
+
+def parse_spa_maxamp(text: str) -> list[dict[str, Any]]:
+    """Parse <prefix>_maxamp.dat rows:
+    `file subint bscrunch (bin_min bin_max max_bin max_amp b_sigma){n_ranges}`.
+    bin_min/bin_max are PHASE BIN INDICES (psrspa writes the -pr range as
+    bins, verified against the installed build). One dict per (entry, range);
+    `file` is kept as "archive_file"."""
+    rows: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        tokens = stripped.split()
+        if len(tokens) < 3:
+            continue
+        head, rest = tokens[:3], tokens[3:]
+        try:
+            subint, bscrunch = int(head[1]), int(head[2])
+        except ValueError:
+            continue
+        for i in range(0, len(rest) - 4, 5):
+            try:
+                rows.append({
+                    "archive_file": head[0],
+                    "subint": subint,
+                    "bscrunch_factor": bscrunch,
+                    "bin_min": int(float(rest[i])),
+                    "bin_max": int(float(rest[i + 1])),
+                    "max_bin": int(float(rest[i + 2])),
+                    "max_amplitude": float(rest[i + 3]),
+                    "b_sigma": float(rest[i + 4]),
+                })
+            except ValueError:
+                break
+    return rows
+
+
+def parse_spa_pulses(text: str) -> list[dict[str, Any]]:
+    """Parse <prefix>_pulses.dat rows:
+    `file subint flux phase width bscrunch_factor`."""
+    rows: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        tokens = stripped.split()
+        if len(tokens) < 6:
+            continue
+        try:
+            rows.append({
+                "archive_file": tokens[0],
+                "subint": int(tokens[1]),
+                "flux": float(tokens[2]),
+                "phase": float(tokens[3]),
+                "width_bins": float(tokens[4]),
+                "bscrunch_factor": int(tokens[5]),
+            })
+        except ValueError:
+            continue
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# rmfit (rotation measure fitting)
+# ---------------------------------------------------------------------------
+
+def rmfit_cmd(
+    binary: str,
+    source: str,
+    *,
+    brute_force: bool = False,
+    rm_range: tuple[float, float, int] | None = None,
+    refine: bool = False,
+    quadratic_window: tuple[float, float] | None = None,
+    quadratic_per_bin: tuple[float, float] | None = None,
+    threshold_sigma: float | None = None,
+    rm_max_upper: float | None = None,
+    rm_per_dm: float | None = None,
+    rm_initial: float | None = None,
+    save_rm_ext: str | None = None,
+) -> list[str]:
+    # No -D/-K: rmfit prints its results as text; PGPLOT plotting is left out
+    # by policy (plots come from matplotlib).
+    args = [binary]
+    if rm_range is not None:
+        args += ["-m", f"{rm_range[0]:g},{rm_range[1]:g},{rm_range[2]:d}"]
+    elif brute_force:
+        args.append("-t")
+    if refine:
+        args.append("-r")
+    if quadratic_window is not None:
+        args += ["-w", f"{quadratic_window[0]:g},{quadratic_window[1]:g}"]
+    if quadratic_per_bin is not None:
+        args += ["-p", f"{quadratic_per_bin[0]:g},{quadratic_per_bin[1]:g}"]
+    if threshold_sigma is not None:
+        args += ["-T", str(threshold_sigma)]
+    if rm_max_upper is not None:
+        args += ["-u", str(rm_max_upper)]
+    if rm_per_dm is not None:
+        args += ["-U", str(rm_per_dm)]
+    if rm_initial is not None:
+        args += ["-R", str(rm_initial)]
+    if save_rm_ext is not None:
+        args += ["-x", save_rm_ext]
+    args.append(source)
+    return args
+
+
+RMFIT_PATTERNS: dict[str, tuple[str, ...]] = {
+    # substrings matched against "label = value [+/- err]" lines (stderr+stdout)
+    "best_rm": ("best rm",),
+    "search_rm": ("estimated rm",),
+    "refined_rm": ("final rotation measure",),
+}
+
+
+def parse_rmfit(text: str) -> dict[str, Any]:
+    """Best-effort parse of rmfit's mixed stdout/stderr text. Recognises:
+    `Best RM is: X [+/- E]`, `rmfit: estimated RM = X [+/- E]`,
+    `final rotation measure = X`, `converged in N iterations`,
+    `Chi-squared = C / F = R`. First match per field wins; errors attach as
+    <field>_error."""
+    out: dict[str, Any] = {}
+
+    def _value_error(rhs: str) -> tuple[float, float | None] | None:
+        tokens = rhs.strip().split()
+        if not tokens:
+            return None
+        try:
+            num = float(tokens[0])
+        except ValueError:
+            return None
+        err: float | None = None
+        if len(tokens) >= 2 and tokens[1] in ("+/-", "±") and len(tokens) >= 3:
+            try:
+                err = float(tokens[2])
+            except ValueError:
+                err = None
+        return num, err
+
+    for line in text.splitlines():
+        low = line.strip().lower()
+        if "converged in" in low:
+            try:
+                out.setdefault("converged_iterations", int(low.split("converged in")[1].split()[0]))
+            except (IndexError, ValueError):
+                pass
+        if "chi-squared" in low and "=" in line:
+            try:
+                # "Chi-squared = C / F = R" -> reduced is the last number
+                numbers = [t for t in line.replace("=", "/").split("/") if t.strip()]
+                out.setdefault("chi2_reduced", float(numbers[-1].strip()))
+            except (IndexError, ValueError):
+                pass
+        # "Best RM is: X +/- E" separates label from value with a colon;
+        # every other pattern uses "label = value". Normalise the colon form
+        # so the same label scan handles both.
+        scan = line
+        if "=" not in line and ":" in line:
+            head, _, tail = line.partition(":")
+            if "best rm" in head.lower():
+                scan = f"{head} = {tail}"
+        if "=" in scan:
+            label, _, rhs = scan.partition("=")
+            low_label = label.strip().lower()
+            ve = _value_error(rhs)
+            if ve is None:
+                continue
+            for field, needles in RMFIT_PATTERNS.items():
+                if field in out:
+                    continue
+                if any(n in low_label for n in needles):
+                    out[field] = ve[0]
+                    if ve[1] is not None:
+                        out[f"{field}_error"] = ve[1]
+                    break
+    return out

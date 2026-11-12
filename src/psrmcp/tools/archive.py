@@ -1,5 +1,5 @@
 """archive_inspect / archive_convert / archive_merge / archive_transform /
-archive_edit (TOOLS.md 5.7-5.11)."""
+archive_edit (TOOLS.md 5.7-5.11)."""  # archive_convert: psrconv -o PSRFITS/Timer/ASCII
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ from ..models.results import (
 from ._common import AppContext, log_artifact_from_stderr, make_provenance
 from .registry import ToolRegistry, ToolSpec
 
-_CONV_EXT = {"psrfits": "fits", "psrarchive": "ar"}
+_CONV_EXT = {"psrfits": "fits", "psrarchive": "ar", "ascii": "txt"}
 
 
 def register(reg: ToolRegistry) -> None:
@@ -50,7 +50,7 @@ def register(reg: ToolRegistry) -> None:
     ))
     reg.add(ToolSpec(
         name="archive_convert",
-        description="Convert between PSRFITS and PSRARCHIVE formats; the input is left untouched and the output is a new artifact.",
+        description="Convert between archive formats via psrconv: psrfits, psrarchive (Timer), or ascii (single-profile text). EPN files can be read but not written (PSRCHIVE has no EPN unload); the input is left untouched and the output is a new artifact.",
         input_model=ArchiveConvertInput,
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False),
         handler=_convert,
@@ -156,7 +156,7 @@ async def _convert(ctx: AppContext, inp: ArchiveConvertInput, progress) -> Archi
     if inp.output_format not in _CONV_EXT:
         raise format_unsupported(
             f"psrconv does not support output format {inp.output_format}",
-            hint="currently psrfits / psrarchive are supported; sigproc/ascii need a different toolchain",
+            hint="supported: psrfits, psrarchive (Timer), ascii; sigproc is not a PSRCHIVE format",
         )
     psr_info = await ctx.backends.require("psrchive")
     binary = _tool(ctx, "psrconv")
@@ -168,7 +168,7 @@ async def _convert(ctx: AppContext, inp: ArchiveConvertInput, progress) -> Archi
     # file — copy the input into the job tmp first
     local_src = job_tmp / resolved.resolved.name
     shutil.copy2(resolved.resolved, local_src)
-    argv = psa.psrconv_cmd(binary, str(local_src), str(job_tmp), ext)
+    argv = psa.psrconv_cmd(binary, str(local_src), ext, inp.output_format)
     run = await ctx.runner.run(argv, cwd=job_tmp, timeout_s=1800.0)
     if run.exit_code != 0:
         log_id = log_artifact_from_stderr(ctx, job_key="psrconv", stderr=run.stderr_tail(), argv=argv)

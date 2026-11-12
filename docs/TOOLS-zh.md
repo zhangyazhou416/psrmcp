@@ -418,6 +418,8 @@ MCP `tools/call` 返回：
 | `profile_standardize` | false | false | true | false | 否 |
 | `profile_measure` | true | false | true | false | 否 |
 | `profile_optimize` | true | false | true | false | 是 |
+| `single_pulse_analyze` | true | false | true | false | 是 |
+| `rotation_measure_fit` | true | false | true | false | 是 |
 | `toa_extract` | false | false | true | false | 是 |
 | `timing_fit` | false | false | true | false | 是 |
 | `timing_diagnose` | true | false | true | false | 否 |
@@ -1108,7 +1110,7 @@ MCP `tools/call` 返回：
 
 ### 5.8 `archive_convert`
 
-**用途**：在 PSRFITS、PSRARCHIVE、SIGPROC、ASCII 之间转换。输入保持不变，输出为新 artifact。
+**用途**：通过 psrconv 在 archive 格式之间转换。可写的目标格式:`psrfits`(PSRFITS)、`psrarchive`(原生 Timer 格式)、`ascii`(单轮廓文本)。EPN 文件 PSRCHIVE 只能读不能写(未实现 EPN unload);`sigproc` 不是 PSRCHIVE 格式,请求时直接拒绝。输入保持不变，输出为新 artifact。
 
 **后端**：psrconv  
 **长任务**：否（超大文件可转异步）  
@@ -1906,7 +1908,302 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.18 `toa_extract`
+### 5.18 `single_pulse_analyze`
+
+**用途**：单脉冲分析（psrspa）。至少选择一种分析模式，模式分为互斥两组：(a) 相位分辨直方图（流量/偏振度/偏振角/线偏振/圆偏振）、相位区间最大振幅、线偏振-偏振角散点数据；(b) 逐脉冲检测（`find_pulses`，巨型脉冲搜索，算法来自白名单）——psrspa 的 `-a` 会提前返回并静默跳过 (a) 组，因此工具在入口直接拒绝该组合。相位分辨直方图是**每个相位 bin 一个文件**（如 nbin=1024 上取 0.3-0.7 区间会产出 411 个文件），工具把它们打包成单个文本 artifact（用 `# >>> <文件名>` 分节）。最大振幅条目携带的是相位 bin 索引（不是 turns），已对装机版本验证。直方图模式需要带 GSL 支持的 psrspa 构建。
+
+**后端**：psrspa  
+**长任务**：是  
+**Annotations**：`readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### 输入 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/single_pulse_analyze.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Artifact ID or relative path under a read root"
+    },
+    "root": {
+      "type": "string"
+    },
+    "histograms": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "flux",
+          "poldeg",
+          "polang",
+          "linear",
+          "circular"
+        ],
+        "type": "string"
+      },
+      "maxItems": 5,
+      "default": []
+    },
+    "find_max_amplitude": {
+      "type": "boolean",
+      "default": false
+    },
+    "scatter_linear_pa": {
+      "type": "boolean",
+      "default": false
+    },
+    "find_pulses": {
+      "type": "boolean",
+      "default": false
+    },
+    "pulse_algorithm": {
+      "type": "string",
+      "default": "above"
+    },
+    "min_pulse_bins": {
+      "type": "integer",
+      "minimum": 16,
+      "maximum": 65536
+    },
+    "phase_ranges": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 2,
+      "maxItems": 16
+    },
+    "hist_bins": {
+      "type": "integer",
+      "minimum": 2,
+      "maximum": 10000
+    },
+    "flux_hist_max": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "pol_threshold": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "log_scale": {
+      "type": "boolean",
+      "default": false
+    },
+    "mean_offset": {
+      "type": "number"
+    },
+    "std_profile": {
+      "type": "string"
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 输出 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/single_pulse_analyze.output.json",
+  "type": "object",
+  "required": ["result_type", "n_histogram_files", "pulses", "max_amplitudes", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "histograms_artifact": {"anyOf": [{"$ref": "#/$defs/ArtifactRef"}, {"type": "null"}]},
+    "n_histogram_files": {"type": "integer", "minimum": 0},
+    "pulses_artifact": {"anyOf": [{"$ref": "#/$defs/ArtifactRef"}, {"type": "null"}]},
+    "pulses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["archive_file", "subint", "flux", "phase", "width_bins", "bscrunch_factor"],
+        "properties": {
+          "archive_file": {"type": "string"},
+          "subint": {"type": "integer", "minimum": 0},
+          "flux": {"type": "number"},
+          "phase": {"type": "number"},
+          "width_bins": {"type": "number", "minimum": 0},
+          "bscrunch_factor": {"type": "integer", "minimum": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "max_amplitudes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["archive_file", "subint", "bscrunch_factor", "bin_min", "bin_max", "max_bin", "max_amplitude"],
+        "properties": {
+          "archive_file": {"type": "string"},
+          "subint": {"type": "integer", "minimum": 0},
+          "bscrunch_factor": {"type": "integer", "minimum": 1},
+          "bin_min": {"type": "integer", "minimum": 0},
+          "bin_max": {"type": "integer", "minimum": 0},
+          "max_bin": {"type": "integer", "minimum": 0},
+          "max_amplitude": {"type": "number"},
+          "b_sigma": {"anyOf": [{"type": "number"}, {"type": "null"}]}
+        },
+        "additionalProperties": false
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+
+#### 错误码
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+### 5.19 `rotation_measure_fit`
+
+**用途**：对已校准、已 tscrunch、已消色散的 archive 拟合旋转测量（rmfit）。方法（至少一种）：暴力搜索试验 RM（`brute_force` 自动边界，或 `rm_range` 给出显式 `min,max,steps` 边界——两者互斥）、双半频带迭代精化（`refine`）、或 Noutsos+2008 二次拟合（`quadratic_window` / `quadratic_per_bin`，相位窗口单位为 turns）。`save_rm_archive=true` 时额外写出一个带每子积分辅助 RM 的新 archive artifact。rmfit 的文本输出做防御性解析；无法解析的 RM 值通过 `W_RMFIT_UNPARSED` 报告。
+
+**后端**：rmfit  
+**长任务**：是  
+**Annotations**：`readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### 输入 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/rotation_measure_fit.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Artifact ID or relative path under a read root"
+    },
+    "root": {
+      "type": "string"
+    },
+    "brute_force": {
+      "type": "boolean",
+      "default": false
+    },
+    "rm_range": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "refine": {
+      "type": "boolean",
+      "default": false
+    },
+    "quadratic_window": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "quadratic_per_bin": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "threshold_sigma": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "rm_max_upper": {
+      "type": "number",
+      "minimum": 0
+    },
+    "rm_per_dm": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "rm_initial": {
+      "type": "number"
+    },
+    "save_rm_archive": {
+      "type": "boolean",
+      "default": false
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 输出 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/rotation_measure_fit.output.json",
+  "type": "object",
+  "required": ["result_type", "data_artifacts", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "best_rm": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    "best_rm_error": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    "search_rm": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    "search_rm_error": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    "refined_rm": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    "converged_iterations": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+    "chi2_reduced": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    "rm_archive": {"anyOf": [{"$ref": "#/$defs/ArtifactRef"}, {"type": "null"}]},
+    "data_artifacts": {"type": "array", "items": {"$ref": "#/$defs/ArtifactRef"}},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 错误码
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+### 5.20 `toa_extract`
 
 **用途**：使用标准轮廓从 archive 提取 TOA，生成 TEMPO `.tim` 文件。
 
@@ -2014,7 +2311,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.19 `timing_fit`
+### 5.21 `timing_fit`
 
 **用途**：使用 PINT 或 tempo2 对 `.par` + `.tim` 做计时拟合，返回更新后的 `.par`、拟合统计、残差和残差图。
 
@@ -2151,7 +2448,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.20 `timing_diagnose`
+### 5.22 `timing_diagnose`
 
 **用途**：对已有 `.par` + `.tim` 做残差和模型诊断，不重新拟合。可检查离群点、DM 变化、JUMP 和残差分布。
 
@@ -2270,7 +2567,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.21 `artifact_list`
+### 5.23 `artifact_list`
 
 **用途**：列出当前工作区的 artifact，支持按类型、时间和游标分页。
 
@@ -2342,7 +2639,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.22 `job_get`
+### 5.24 `job_get`
 
 **用途**：查询异步任务状态和结果。仅在客户端不支持 MCP Tasks 扩展时作为兜底使用。
 
@@ -2390,7 +2687,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.23 `job_cancel`
+### 5.25 `job_cancel`
 
 **用途**：请求取消异步任务。取消是协作式的：服务器先发送 `SIGTERM`，宽限期后如仍运行则 `SIGKILL` 进程组。
 

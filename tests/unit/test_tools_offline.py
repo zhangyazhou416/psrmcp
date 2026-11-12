@@ -329,3 +329,140 @@ async def test_profile_optimize_unparsed_output_warns(ctx, registry, tmp_path, m
     body = out.structured_content
     assert body["best_dm"] is None
     assert [w["code"] for w in body["warnings"]] == ["W_PDMP_UNPARSED"]
+
+
+# ---------------------------------------------------------------------------
+# single_pulse_analyze / rotation_measure_fit (scripted backends)
+# ---------------------------------------------------------------------------
+
+_SPA_MAXAMP = "spa_src.ar 0 1 0.45 0.5 312 18.4 2.1\nspa_src.ar 1 1 0.45 0.5 297 11.2 -1.0\n"
+_SPA_PULSES = "spa_src.ar 3 42.5 310.0 8.0 1\nspa_src.ar 7 101.25 312.0 12.0 1\n"
+_RMFIT_SAMPLE = (
+    "Best RM is: 2.6441 +/- 0.05\n"
+    "Chi-squared = 130.5 / 120 = 1.0875\n"
+)
+
+
+def _spa_produce(name, cwd):
+    if name == "psrspa" and cwd:
+        (cwd / "spa_flux_30.dat").write_text("# histogram\n")
+        (cwd / "spa_maxamp.dat").write_text(_SPA_MAXAMP)
+        (cwd / "spa_pulses.dat").write_text(_SPA_PULSES)
+
+
+def _rmfit_produce(name, cwd):
+    if name == "rmfit" and cwd:
+        (cwd / "rmfit.out").write_text("NAME <I> ...\n")
+        (cwd / "rm_src.rmfit").write_bytes(b"fake")
+
+
+async def test_single_pulse_analyze_modes_and_outputs(ctx, registry, tmp_path, monkeypatch):
+    _archive_env(ctx, tmp_path)
+    monkeypatch.setattr("psrmcp.tools.singlepulse._psrchive_tool", lambda c, n: f"/fake/{n}")
+    runner = _ScriptedRunner({"psrspa": (0, "", "")}, produce=_spa_produce)
+    ctx.runner = runner
+
+    out = await registry.dispatch(
+        "single_pulse_analyze",
+        {"archive": "obs.ar", "histograms": ["flux"], "find_max_amplitude": True,
+         "phase_ranges": [0.45, 0.5], "execution_mode": "sync"},
+    )
+    assert out.is_error is False, out.structured_content
+    body = out.structured_content
+    assert body["n_histogram_files"] == 1
+    assert body["histograms_artifact"]["artifact_id"].startswith("art_")
+    assert len(body["max_amplitudes"]) == 2
+    assert body["max_amplitudes"][0]["max_bin"] == 312
+    assert body["max_amplitudes"][0]["bin_min"] == 0
+    assert body["warnings"] == []
+    argv = [c for c in runner.calls if c[0] == "/fake/psrspa"][0]
+    assert argv[:2] == ["/fake/psrspa", "-hf"]
+    assert "-fm" in argv and "-a" not in argv
+    assert argv[argv.index("-pr") + 1] == "0.45,0.5"
+    assert argv[argv.index("-e") + 1] == "dat"
+
+    # find_pulses runs alone (psrspa's -a excludes the histogram modes)
+    runner = _ScriptedRunner({"psrspa": (0, "", "")}, produce=_spa_produce)
+    ctx.runner = runner
+    out = await registry.dispatch(
+        "single_pulse_analyze",
+        {"archive": "obs.ar", "find_pulses": True, "execution_mode": "sync"},
+    )
+    assert out.is_error is False, out.structured_content
+    body = out.structured_content
+    assert body["pulses_artifact"]["artifact_id"].startswith("art_")
+    assert len(body["pulses"]) == 2 and body["pulses"][0]["flux"] == 42.5
+    assert body["warnings"] == []
+    argv = [c for c in runner.calls if c[0] == "/fake/psrspa"][0]
+    assert argv[argv.index("-a") + 1] == "above"
+
+    # no mode requested -> E_INVALID_INPUT
+    out = await registry.dispatch("single_pulse_analyze", {"archive": "obs.ar"})
+    assert out.is_error is True
+    assert out.structured_content["error"]["code"] == ErrorCode.INVALID_INPUT.value
+
+    # find_pulses is exclusive of the histogram modes -> E_INVALID_INPUT
+    out = await registry.dispatch(
+        "single_pulse_analyze", {"archive": "obs.ar", "find_pulses": True,
+                                 "histograms": ["flux"]}
+    )
+    assert out.is_error is True
+
+    # bad pulse algorithm / odd phase ranges -> E_INVALID_INPUT
+    out = await registry.dispatch(
+        "single_pulse_analyze", {"archive": "obs.ar", "find_pulses": True,
+                                 "pulse_algorithm": "rm -rf /"}
+    )
+    assert out.is_error is True
+    out = await registry.dispatch(
+        "single_pulse_analyze", {"archive": "obs.ar", "find_max_amplitude": True,
+                                 "phase_ranges": [0.5]}
+    )
+    assert out.is_error is True
+
+
+async def test_rotation_measure_fit_parses_and_commits(ctx, registry, tmp_path, monkeypatch):
+    _archive_env(ctx, tmp_path)
+    monkeypatch.setattr("psrmcp.tools.rmfit._psrchive_tool", lambda c, n: f"/fake/{n}")
+    runner = _ScriptedRunner({"rmfit": (0, _RMFIT_SAMPLE, "")}, produce=_rmfit_produce)
+    ctx.runner = runner
+
+    out = await registry.dispatch(
+        "rotation_measure_fit",
+        {"archive": "obs.ar", "rm_range": [-50.0, 50.0, 200], "refine": True,
+         "save_rm_archive": True, "execution_mode": "sync"},
+    )
+    assert out.is_error is False, out.structured_content
+    body = out.structured_content
+    assert body["best_rm"] == 2.6441 and body["best_rm_error"] == 0.05
+    assert body["chi2_reduced"] == 1.0875
+    assert body["rm_archive"]["artifact_id"].startswith("art_")
+    assert len(body["data_artifacts"]) >= 1  # rmfit.out (+ <src>.data if written)
+    assert body["warnings"] == []
+    argv = [c for c in runner.calls if c[0] == "/fake/rmfit"][0]
+    assert argv[argv.index("-m") + 1] == "-50,50,200"
+    assert "-r" in argv and argv[argv.index("-x") + 1] == "rmfit"
+
+    # brute_force + rm_range are mutually exclusive -> E_INVALID_INPUT
+    out = await registry.dispatch(
+        "rotation_measure_fit",
+        {"archive": "obs.ar", "brute_force": True, "rm_range": [-1.0, 1.0, 10],
+         "execution_mode": "sync"},
+    )
+    assert out.is_error is True
+    assert out.structured_content["error"]["code"] == ErrorCode.INVALID_INPUT.value
+
+
+async def test_rotation_measure_fit_unparsed_output_warns(ctx, registry, tmp_path, monkeypatch):
+    _archive_env(ctx, tmp_path)
+    monkeypatch.setattr("psrmcp.tools.rmfit._psrchive_tool", lambda c, n: f"/fake/{n}")
+    ctx.runner = _ScriptedRunner({"rmfit": (0, "no recognisable values\n", "")})
+
+    out = await registry.dispatch(
+        "rotation_measure_fit", {"archive": "obs.ar", "brute_force": True,
+                                 "execution_mode": "sync"}
+    )
+    assert out.is_error is False
+    body = out.structured_content
+    assert body["best_rm"] is None
+    assert [w["code"] for w in body["warnings"]] == ["W_RMFIT_UNPARSED"]

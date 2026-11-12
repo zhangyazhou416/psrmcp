@@ -1,4 +1,4 @@
-"""Input models for all 23 tools (TOOLS.md section 5 schemas, 1:1).
+"""Input models for all 25 tools (TOOLS.md section 5 schemas, 1:1).
 
 All models forbid extra properties, mirroring `additionalProperties: false`.
 """
@@ -298,6 +298,113 @@ class ProfileOptimizeInput(BaseModel):
     max_subints: int | None = Field(default=None, ge=1, le=10000)
     standard_profile: str | None = None
     execution_mode: ExecutionMode = ExecutionMode.AUTO
+
+
+class SinglePulseAnalyzeInput(BaseModel):
+    """Single-pulse analysis (psrspa). At least one analysis mode is
+    required: phase-resolved histograms, maximum amplitude in phase range,
+    linear-polarization vs PA scatter data, or per-pulse detection. The
+    input archive is read-only; all outputs are new text artifacts."""
+
+    model_config = FORBID
+    archive: str
+    root: str | None = None
+    histograms: list[Literal["flux", "poldeg", "polang", "linear", "circular"]] = Field(
+        default_factory=list, max_length=5
+    )
+    find_max_amplitude: bool = False
+    scatter_linear_pa: bool = False
+    find_pulses: bool = False
+    pulse_algorithm: str = "above"
+    min_pulse_bins: int | None = Field(default=None, ge=16, le=65536)
+    phase_ranges: list[float] | None = Field(default=None, min_length=2, max_length=16)
+    hist_bins: int | None = Field(default=None, ge=2, le=10000)
+    flux_hist_max: float | None = Field(default=None, gt=0)
+    pol_threshold: float | None = Field(default=None, gt=0)
+    log_scale: bool = False
+    mean_offset: float | None = None
+    std_profile: str | None = None
+    execution_mode: ExecutionMode = ExecutionMode.AUTO
+
+    @model_validator(mode="after")
+    def _check_modes(self):
+        from ..adapters.psrchive import psrspa_algorithm_ok
+
+        if not (self.histograms or self.find_max_amplitude
+                or self.scatter_linear_pa or self.find_pulses):
+            raise ValueError(
+                "at least one analysis mode is required: histograms, "
+                "find_max_amplitude, scatter_linear_pa, or find_pulses"
+            )
+        if self.find_pulses and (self.histograms or self.find_max_amplitude
+                                 or self.scatter_linear_pa):
+            raise ValueError(
+                "find_pulses is exclusive of the histogram modes: psrspa's -a "
+                "pulse finder returns early and silently skips "
+                "histograms/find_max_amplitude/scatter"
+            )
+        if self.phase_ranges:
+            vals = self.phase_ranges
+            if len(vals) % 2:
+                raise ValueError("phase_ranges must be flattened min,max pairs (even count)")
+            for i in range(0, len(vals), 2):
+                lo, hi = vals[i], vals[i + 1]
+                if not (0.0 <= lo < hi <= 1.0):
+                    raise ValueError(f"invalid phase range [{lo}, {hi}]: need 0 <= min < max <= 1")
+        if self.find_pulses and not psrspa_algorithm_ok(self.pulse_algorithm):
+            raise ValueError(
+                f"pulse_algorithm {self.pulse_algorithm!r} is not an allowed psrspa "
+                "algorithm (above/consecutive/cumulative/set/exponential/normal/minimum, "
+                "optionally ':option=value' pairs)"
+            )
+        return self
+
+
+class RotationMeasureFitInput(BaseModel):
+    """Fit the rotation measure (rmfit). Prerequisite: calibrated data
+    (pac), tscrunched and dedispersed. At least one method is required;
+    brute_force and rm_range are mutually exclusive (rm_range gives explicit
+    search bounds min,max,steps, brute_force uses rmfit's auto bounds).
+    quadratic_window / quadratic_per_bin are the Noutsos+2008 pulse phase
+    windows in turns (0..1)."""
+
+    model_config = FORBID
+    archive: str
+    root: str | None = None
+    brute_force: bool = False
+    rm_range: list[float] | None = Field(default=None, min_length=3, max_length=3)
+    refine: bool = False
+    quadratic_window: list[float] | None = Field(default=None, min_length=2, max_length=2)
+    quadratic_per_bin: list[float] | None = Field(default=None, min_length=2, max_length=2)
+    threshold_sigma: float | None = Field(default=None, gt=0)
+    rm_max_upper: float | None = Field(default=None, ge=0)
+    rm_per_dm: float | None = Field(default=None, gt=0)
+    rm_initial: float | None = None
+    save_rm_archive: bool = False
+    output_name: str | None = Field(default=None, max_length=128)
+    execution_mode: ExecutionMode = ExecutionMode.AUTO
+
+    @model_validator(mode="after")
+    def _check_methods(self):
+        if not (self.brute_force or self.rm_range or self.refine
+                or self.quadratic_window or self.quadratic_per_bin):
+            raise ValueError(
+                "at least one RM estimation method is required: brute_force, "
+                "rm_range, refine, quadratic_window, or quadratic_per_bin"
+            )
+        if self.brute_force and self.rm_range:
+            raise ValueError("brute_force and rm_range are mutually exclusive")
+        if self.rm_range is not None:
+            lo, hi, steps = self.rm_range
+            if not lo < hi:
+                raise ValueError(f"rm_range min must be < max (got {lo}, {hi})")
+            if not (float(steps).is_integer() and 2 <= steps <= 100000):
+                raise ValueError(f"rm_range steps must be an integer in [2, 100000] (got {steps})")
+        for name in ("quadratic_window", "quadratic_per_bin"):
+            window = getattr(self, name)
+            if window is not None and not (0.0 <= window[0] < window[1] <= 1.0):
+                raise ValueError(f"{name} must be 0 <= x1 < x2 <= 1 (phase turns), got {window}")
+        return self
 
 
 class ToaExtractInput(BaseModel):

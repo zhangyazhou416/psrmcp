@@ -1,4 +1,4 @@
-"""Output models for all 23 tools (TOOLS.md section 5 output schemas)."""
+"""Output models for all 25 tools (TOOLS.md section 5 output schemas)."""
 
 from __future__ import annotations
 
@@ -399,6 +399,117 @@ class ProfileOptimizeResult(ToolResult):
         if self.best_snr is not None:
             parts.append(f"S/N = {self.best_snr:.1f}")
         lines = ["Period/DM optimization: " + (", ".join(parts) if parts else "no best-fit values parsed")]
+        for w in self.warnings:
+            lines.append(f"- ⚠ {w.message}")
+        return "\n".join(lines)
+
+
+class MaxAmplitudeRow(BaseModel):
+    """One entry of psrspa's <prefix>_maxamp.dat (GSL-compatible layout):
+    the highest-amplitude phase bin inside the requested bin range for one
+    sub-integration. bin_min/bin_max/max_bin are phase bin indices."""
+    model_config = FORBID
+    archive_file: str
+    subint: int = Field(ge=0)
+    bscrunch_factor: int = Field(ge=1)
+    bin_min: int = Field(ge=0)
+    bin_max: int = Field(ge=0)
+    max_bin: int = Field(ge=0)
+    max_amplitude: float
+    b_sigma: float | None = None
+
+
+class SinglePulseRow(BaseModel):
+    """One detected single pulse (psrspa <prefix>_pulses.dat): flux is in
+    the archive's amplitude units, phase/width in phase bins."""
+    model_config = FORBID
+    archive_file: str
+    subint: int = Field(ge=0)
+    flux: float
+    phase: float
+    width_bins: float = Field(ge=0)
+    bscrunch_factor: int = Field(ge=1)
+
+
+class SinglePulseAnalyzeResult(ToolResult):
+    """Single-pulse analysis outputs (psrspa). psrspa writes one histogram
+    file per phase bin in the requested range (hundreds to thousands of
+    files), so they are bundled into a single text artifact with
+    `# >>> <filename>` section headers. Pulse / max-amplitude rows are
+    parsed and returned inline."""
+
+    histograms_artifact: ArtifactRef | None = None
+    n_histogram_files: int = 0
+    pulses_artifact: ArtifactRef | None = None
+    pulses: list[SinglePulseRow] = Field(default_factory=list)
+    max_amplitudes: list[MaxAmplitudeRow] = Field(default_factory=list)
+    warnings: list[WarningInfo] = Field(default_factory=list)
+
+    def summarize(self) -> str:
+        lines: list[str] = []
+        if self.pulses:
+            fluxes = [p.flux for p in self.pulses]
+            lines.append(
+                f"Single-pulse analysis: {len(self.pulses)} pulses detected, "
+                f"flux {min(fluxes):.4g} - {max(fluxes):.4g}"
+            )
+        elif self.max_amplitudes:
+            amps = [m.max_amplitude for m in self.max_amplitudes]
+            lines.append(
+                f"Single-pulse analysis: {len(self.max_amplitudes)} max-amplitude "
+                f"entries, amplitude {min(amps):.4g} - {max(amps):.4g}"
+            )
+        elif self.histograms_artifact is not None:
+            lines.append(
+                f"Single-pulse analysis: {self.n_histogram_files} phase-bin histogram file(s)"
+            )
+        else:
+            lines.append("Single-pulse analysis: no outputs parsed")
+        if self.histograms_artifact is not None:
+            lines.append(f"- histograms: `{self.histograms_artifact.artifact_id}` (bundled text)")
+        if self.pulses_artifact is not None:
+            lines.append(f"- pulses: `{self.pulses_artifact.artifact_id}`")
+        for w in self.warnings:
+            lines.append(f"- ⚠ {w.message}")
+        return "\n".join(lines)
+
+
+class RotationMeasureFitResult(ToolResult):
+    """RM fit results (rmfit). Values are best-effort parses of rmfit's text
+    output; a None field means the corresponding method was not run or its
+    label was not found (see warnings). rm_archive carries the input with
+    per-sub-int auxiliary RM applied (only when save_rm_archive=true)."""
+
+    best_rm: float | None = None
+    best_rm_error: float | None = None
+    search_rm: float | None = None
+    search_rm_error: float | None = None
+    refined_rm: float | None = None
+    converged_iterations: int | None = None
+    chi2_reduced: float | None = None
+    rm_archive: ArtifactRef | None = None
+    data_artifacts: list[ArtifactRef] = Field(default_factory=list)
+    warnings: list[WarningInfo] = Field(default_factory=list)
+
+    def summarize(self) -> str:
+        parts: list[str] = []
+        if self.refined_rm is not None:
+            parts.append(f"refined RM = {self.refined_rm:.3f} rad/m^2")
+        if self.best_rm is not None:
+            parts.append(f"best RM = {self.best_rm:.3f} rad/m^2"
+                         + (f" +/- {self.best_rm_error:.2g}" if self.best_rm_error is not None else ""))
+        if self.search_rm is not None:
+            parts.append(f"search RM = {self.search_rm:.3f} rad/m^2"
+                         + (f" +/- {self.search_rm_error:.2g}" if self.search_rm_error is not None else ""))
+        if self.converged_iterations is not None:
+            parts.append(f"converged in {self.converged_iterations} iterations")
+        if self.chi2_reduced is not None:
+            parts.append(f"reduced chi^2 = {self.chi2_reduced:.3f}")
+        lines = ["Rotation measure fit: " + ("; ".join(parts) if parts else "no RM values parsed")]
+        if self.rm_archive is not None:
+            lines.append(f"- RM-corrected archive: `{self.rm_archive.artifact_id}`")
+        for a in self.data_artifacts:
+            lines.append(f"- data table: `{a.artifact_id}`")
         for w in self.warnings:
             lines.append(f"- ⚠ {w.message}")
         return "\n".join(lines)

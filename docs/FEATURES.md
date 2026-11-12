@@ -2,7 +2,7 @@
 
 English | [简体中文](FEATURES-zh.md)
 
-psrmcp wraps the professional pulsar radio-astronomy processing stack (**dspsr / PSRCHIVE / tempo2 / psrcat / PINT**) as an MCP server, so AI assistants (Claude Code, Claude Desktop, etc.) can drive them directly and safely, covering the full pipeline from raw observation data to timing analysis reports. The AI does not need to memorize each package's command-line flags; instead it calls 23 task-oriented high-level tools, and every result is structured and traceable.
+psrmcp wraps the professional pulsar radio-astronomy processing stack (**dspsr / PSRCHIVE / tempo2 / psrcat / PINT**) as an MCP server, so AI assistants (Claude Code, Claude Desktop, etc.) can drive them directly and safely, covering the full pipeline from raw observation data to timing analysis reports. The AI does not need to memorize each package's command-line flags; instead it calls 25 task-oriented high-level tools, and every result is structured and traceable.
 
 Design principles: **task-oriented, controlled parameters, structured results, full traceability** (architecture in [DESIGN.md](DESIGN.md), per-tool schemas in [TOOLS.md](TOOLS.md)).
 
@@ -10,7 +10,7 @@ Design principles: **task-oriented, controlled parameters, structured results, f
 
 | Backend | Purpose |
 |---|---|
-| PSRCHIVE | archive inspection/processing (vap / psrstat / pam / pat / psradd / paz) |
+| PSRCHIVE | archive inspection/processing (vap / psrstat / psrconv / pam / psredit / pdmp / psrspa / rmfit / pat / psradd / paz) |
 | dspsr | dedispersion and folding of raw data (filterbank / PSRFITS) |
 | tempo2 | pulsar timing (ephemerides, phase prediction) |
 | psrcat | local queries of the ATNF pulsar catalogue and ephemeris export |
@@ -18,7 +18,7 @@ Design principles: **task-oriented, controlled parameters, structured results, f
 
 Missing backends do not crash the server: `pulsar_environment` reports available/reason for each one, and tools that depend on a missing backend return `E_ENV_MISSING` with a hint.
 
-## The 23 tools (grouped by processing pipeline)
+## The 25 tools (grouped by processing pipeline)
 
 **Environment and data discovery**
 
@@ -66,6 +66,8 @@ Missing backends do not crash the server: `pulsar_environment` reports available
 | `profile_standardize` | normalize/align to a standard profile and output a profile plot |
 | `profile_measure` | measurements such as SNR, W50/W10 pulse widths, and peak flux, with a matplotlib profile plot |
 | `profile_optimize` ⏱ | pdmp search for the best period and DM (maximizing S/N); reports corrections with errors; input stays read-only |
+| `single_pulse_analyze` ⏱ | psrspa single-pulse analysis: phase-resolved flux/polarisation histograms (one per phase bin, bundled into one text artifact), max amplitude in phase ranges, giant-pulse search |
+| `rotation_measure_fit` ⏱ | rmfit rotation-measure fit (brute force / band-half refinement / Noutsos+2008 quadratic) for calibrated data; can write an RM-corrected archive |
 
 **Timing**
 
@@ -116,5 +118,5 @@ The artifacts of every step (archives, .tim/.par, plots, logs) carry provenance 
 
 - [TUTORIAL.md](TUTORIAL.md) — usage tutorial (from installation to a full processing-chain walkthrough)
 - [DESIGN.md](DESIGN.md) — architecture and execution model
-- [TOOLS.md](TOOLS.md) — complete JSON Schema contracts for all 23 tools
+- [TOOLS.md](TOOLS.md) — complete JSON Schema contracts for all 25 tools
 - [INSTALL.md](INSTALL.md) — one-click installation of the software stack

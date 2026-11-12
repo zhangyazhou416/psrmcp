@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/rotation_measure_fit.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Artifact ID or relative path under a read root"
+    },
+    "root": {
+      "type": "string"
+    },
+    "brute_force": {
+      "type": "boolean",
+      "default": false
+    },
+    "rm_range": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "refine": {
+      "type": "boolean",
+      "default": false
+    },
+    "quadratic_window": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "quadratic_per_bin": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "threshold_sigma": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "rm_max_upper": {
+      "type": "number",
+      "minimum": 0
+    },
+    "rm_per_dm": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "rm_initial": {
+      "type": "number"
+    },
+    "save_rm_archive": {
+      "type": "boolean",
+      "default": false
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}

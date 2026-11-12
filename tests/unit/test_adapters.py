@@ -268,3 +268,109 @@ def test_psredit_key_ok():
     assert not psa.psredit_key_ok("")
     assert not psa.psredit_key_ok("key=value")
     assert not psa.psredit_key_ok("9start")
+
+
+def test_psrconv_cmd_contract():
+    # -o must be passed explicitly: without it cfitsio builds silently fall
+    # back to PSRFITS even for Timer/ASCII outputs
+    argv = psa.psrconv_cmd("psrconv", "src.ar", "ar", "psrarchive")
+    assert argv == ["psrconv", "-o", "Timer", "-e", "ar", "src.ar"]
+    assert psa.psrconv_cmd("psrconv", "src.ar", "fits", "psrfits")[2] == "PSRFITS"
+    assert psa.psrconv_cmd("psrconv", "src.ar", "txt", "ascii")[2] == "ASCII"
+
+
+def test_psrspa_cmd_contract():
+    argv = psa.psrspa_cmd(
+        "psrspa", "obs.ar", histograms=("flux", "poldeg"), find_max_amplitude=True,
+        find_pulses=True, pulse_algorithm="consecutive:threshold=4", min_pulse_bins=128,
+        phase_ranges=(0.45, 0.5, 0.6, 0.7), hist_bins=64, log_scale=True,
+    )
+    assert argv[:3] == ["psrspa", "-hf", "-hd"]
+    assert "-fm" in argv and "-sla" not in argv
+    assert argv[argv.index("-a") + 1] == "consecutive:threshold=4"
+    assert argv[argv.index("-N") + 1] == "128"
+    assert argv[argv.index("-pr") + 1] == "0.45,0.5,0.6,0.7"
+    assert argv[argv.index("-b") + 1] == "64"
+    assert "-l" in argv
+    assert argv[argv.index("-pfix") + 1] == "spa"
+    assert argv[argv.index("-e") + 1] == "dat"
+    assert argv[-1] == "obs.ar"
+    # bare minimum
+    assert psa.psrspa_cmd("psrspa", "obs.ar", histograms=("flux",)) == \
+        ["psrspa", "-hf", "-pfix", "spa", "-e", "dat", "obs.ar"]
+
+
+def test_psrspa_algorithm_ok():
+    for name in psa.SPA_ALGORITHMS:
+        assert psa.psrspa_algorithm_ok(name), name
+    assert psa.psrspa_algorithm_ok("consecutive:threshold=4")
+    assert psa.psrspa_algorithm_ok("normal:baseline=off:threshold=3")
+    assert not psa.psrspa_algorithm_ok("bogus")
+    assert not psa.psrspa_algorithm_ok("consecutive:threshold=4;rm -rf")
+    assert not psa.psrspa_algorithm_ok("")
+
+
+def test_parse_spa_outputs():
+    maxamp = psa.parse_spa_maxamp(
+        "obs.ar 0 1 307 717 312 18.4 2.1\n"
+        "obs.ar 1 1 307 717 297 11.2 -1.0\n"
+    )
+    assert len(maxamp) == 2
+    assert maxamp[0]["subint"] == 0 and maxamp[0]["max_bin"] == 312
+    assert maxamp[0]["bin_min"] == 307 and maxamp[0]["bin_max"] == 717
+    assert maxamp[0]["max_amplitude"] == 18.4 and maxamp[0]["b_sigma"] == 2.1
+    assert maxamp[1]["subint"] == 1 and maxamp[1]["max_amplitude"] == 11.2
+    # multiple ranges repeat the 5-field group per range on one line
+    two = psa.parse_spa_maxamp("obs.ar 2 1 200 300 100 5.0 1.0 301 400 150 7.5 0.5\n")
+    assert len(two) == 2
+    assert two[1]["bin_min"] == 301 and two[1]["max_amplitude"] == 7.5
+
+    pulses = psa.parse_spa_pulses(
+        "obs.ar 3 42.5 310.0 8.0 1\nobs.ar 7 101.25 312.0 12.0 1\n"
+    )
+    assert pulses[0]["subint"] == 3 and pulses[0]["flux"] == 42.5
+    assert pulses[1]["phase"] == 312.0 and pulses[1]["width_bins"] == 12.0
+    assert psa.parse_spa_maxamp("") == [] and psa.parse_spa_pulses("junk line\n") == []
+
+
+def test_rmfit_cmd_contract():
+    argv = psa.rmfit_cmd(
+        "rmfit", "obs.ar", rm_range=(-50.0, 50.0, 200), refine=True,
+        quadratic_window=(0.4, 0.6), threshold_sigma=4.0, rm_max_upper=2000,
+        rm_per_dm=6.0, rm_initial=2.6, save_rm_ext="rmfit",
+    )
+    assert argv[argv.index("-m") + 1] == "-50,50,200"
+    assert "-r" in argv
+    assert argv[argv.index("-w") + 1] == "0.4,0.6"
+    assert argv[argv.index("-T") + 1] == "4.0"
+    assert argv[argv.index("-u") + 1] == "2000"
+    assert argv[argv.index("-U") + 1] == "6.0"
+    assert argv[argv.index("-R") + 1] == "2.6"
+    assert argv[argv.index("-x") + 1] == "rmfit"
+    assert argv[-1] == "obs.ar"
+    # brute force with auto bounds
+    assert psa.rmfit_cmd("rmfit", "obs.ar", brute_force=True) == ["rmfit", "-t", "obs.ar"]
+    # rm_range takes precedence over brute_force (mutually exclusive upstream)
+    argv = psa.rmfit_cmd("rmfit", "obs.ar", brute_force=True, rm_range=(0, 100, 10))
+    assert "-t" not in argv and argv[argv.index("-m") + 1] == "0,100,10"
+
+
+def test_parse_rmfit_labels():
+    sample = """\
+rmfit: do_refine set threshold = 3
+Chi-squared = 130.5 / 120 = 1.0875
+rmfit: estimated RM = 2.6441 +/- 0.031
+rmfit: converged in 4 iterations
+       final rotation measure = 2.6438
+Best RM is: 2.6441 +/- 0.05
+"""
+    out = psa.parse_rmfit(sample)
+    assert out["best_rm"] == 2.6441 and out["best_rm_error"] == 0.05
+    assert out["search_rm"] == 2.6441 and out["search_rm_error"] == 0.031
+    assert out["refined_rm"] == 2.6438
+    assert out["converged_iterations"] == 4
+    assert out["chi2_reduced"] == 1.0875
+    # "Best RM is:" without an error survives the Gaussian fit failure path
+    out = psa.parse_rmfit("rmfit: failed to fit for best RM.\nBest RM is: 2.6\n")
+    assert out["best_rm"] == 2.6 and "best_rm_error" not in out
+    assert psa.parse_rmfit("nothing useful here\n") == {}

@@ -418,6 +418,8 @@ The following `$defs` are referenced by all tool schemas. Implementations may ge
 | `profile_standardize` | false | false | true | false | no |
 | `profile_measure` | true | false | true | false | no |
 | `profile_optimize` | true | false | true | false | yes |
+| `single_pulse_analyze` | true | false | true | false | yes |
+| `rotation_measure_fit` | true | false | true | false | yes |
 | `toa_extract` | false | false | true | false | yes |
 | `timing_fit` | false | false | true | false | yes |
 | `timing_diagnose` | true | false | true | false | no |
@@ -1108,7 +1110,7 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ### 5.8 `archive_convert`
 
-**Purpose**: Converts between PSRFITS, PSRARCHIVE, SIGPROC, and ASCII. The input is left untouched; the output is a new artifact.
+**Purpose**: Converts between archive formats via psrconv: writable targets are `psrfits` (PSRFITS), `psrarchive` (the native Timer format), and `ascii` (single-profile text). EPN files can be read by PSRCHIVE but not written (no EPN unload is implemented); `sigproc` is not a PSRCHIVE format and is rejected up front. The input is left untouched; the output is a new artifact.
 
 **Backend**: psrconv  
 **Long-running**: no (very large files may be switched to async)  
@@ -1906,7 +1908,302 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.18 `toa_extract`
+### 5.18 `single_pulse_analyze`
+
+**Purpose**: Single-pulse analysis (psrspa). At least one analysis mode is required, and the modes split into two exclusive groups: (a) phase-resolved histograms (flux / polarisation degree / PA / linear / circular), maximum amplitude inside phase ranges, and linear-vs-PA scatter data; (b) per-pulse detection (`find_pulses`, giant-pulse search with an allowlisted finder algorithm) — psrspa's `-a` returns early and silently skips group (a), so the tool rejects the combination up front. Phase-resolved histograms are written one file per phase bin in the requested range (e.g. 411 files for range 0.3-0.7 on nbin=1024); they are bundled into a single text artifact with `# >>> <filename>` section headers. Max-amplitude entries carry phase bin indices (not turns), verified against the installed build. Histogram modes require a psrspa build with GSL support.
+
+**Backend**: psrspa  
+**Long-running**: yes  
+**Annotations**: `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### Input Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/single_pulse_analyze.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Artifact ID or relative path under a read root"
+    },
+    "root": {
+      "type": "string"
+    },
+    "histograms": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "flux",
+          "poldeg",
+          "polang",
+          "linear",
+          "circular"
+        ],
+        "type": "string"
+      },
+      "maxItems": 5,
+      "default": []
+    },
+    "find_max_amplitude": {
+      "type": "boolean",
+      "default": false
+    },
+    "scatter_linear_pa": {
+      "type": "boolean",
+      "default": false
+    },
+    "find_pulses": {
+      "type": "boolean",
+      "default": false
+    },
+    "pulse_algorithm": {
+      "type": "string",
+      "default": "above"
+    },
+    "min_pulse_bins": {
+      "type": "integer",
+      "minimum": 16,
+      "maximum": 65536
+    },
+    "phase_ranges": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 2,
+      "maxItems": 16
+    },
+    "hist_bins": {
+      "type": "integer",
+      "minimum": 2,
+      "maximum": 10000
+    },
+    "flux_hist_max": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "pol_threshold": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "log_scale": {
+      "type": "boolean",
+      "default": false
+    },
+    "mean_offset": {
+      "type": "number"
+    },
+    "std_profile": {
+      "type": "string"
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Output Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/single_pulse_analyze.output.json",
+  "type": "object",
+  "required": ["result_type", "n_histogram_files", "pulses", "max_amplitudes", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "histograms_artifact": {"anyOf": [{"$ref": "#/$defs/ArtifactRef"}, {"type": "null"}]},
+    "n_histogram_files": {"type": "integer", "minimum": 0},
+    "pulses_artifact": {"anyOf": [{"$ref": "#/$defs/ArtifactRef"}, {"type": "null"}]},
+    "pulses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["archive_file", "subint", "flux", "phase", "width_bins", "bscrunch_factor"],
+        "properties": {
+          "archive_file": {"type": "string"},
+          "subint": {"type": "integer", "minimum": 0},
+          "flux": {"type": "number"},
+          "phase": {"type": "number"},
+          "width_bins": {"type": "number", "minimum": 0},
+          "bscrunch_factor": {"type": "integer", "minimum": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "max_amplitudes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["archive_file", "subint", "bscrunch_factor", "bin_min", "bin_max", "max_bin", "max_amplitude"],
+        "properties": {
+          "archive_file": {"type": "string"},
+          "subint": {"type": "integer", "minimum": 0},
+          "bscrunch_factor": {"type": "integer", "minimum": 1},
+          "bin_min": {"type": "integer", "minimum": 0},
+          "bin_max": {"type": "integer", "minimum": 0},
+          "max_bin": {"type": "integer", "minimum": 0},
+          "max_amplitude": {"type": "number"},
+          "b_sigma": {"anyOf": [{"type": "number"}, {"type": "null"}]}
+        },
+        "additionalProperties": false
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+
+#### Error Codes
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+### 5.19 `rotation_measure_fit`
+
+**Purpose**: Fit the rotation measure (rmfit) of a calibrated, tscrunched, dedispersed archive. Methods (at least one): brute-force search over trial RMs (`brute_force` for auto bounds or `rm_range` for explicit `min,max,steps` bounds — mutually exclusive), iterative two-halves-of-band refinement (`refine`), or the quadratic method by Noutsos et al. 2008 (`quadratic_window` / `quadratic_per_bin`, phase windows in turns). `save_rm_archive=true` additionally writes a new archive artifact with the per-sub-int auxiliary RM applied. rmfit's text output is parsed defensively; RM values that cannot be parsed are reported via `W_RMFIT_UNPARSED`.
+
+**Backend**: rmfit  
+**Long-running**: yes  
+**Annotations**: `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### Input Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/rotation_measure_fit.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Artifact ID or relative path under a read root"
+    },
+    "root": {
+      "type": "string"
+    },
+    "brute_force": {
+      "type": "boolean",
+      "default": false
+    },
+    "rm_range": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "refine": {
+      "type": "boolean",
+      "default": false
+    },
+    "quadratic_window": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "quadratic_per_bin": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "threshold_sigma": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "rm_max_upper": {
+      "type": "number",
+      "minimum": 0
+    },
+    "rm_per_dm": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "rm_initial": {
+      "type": "number"
+    },
+    "save_rm_archive": {
+      "type": "boolean",
+      "default": false
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Output Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/rotation_measure_fit.output.json",
+  "type": "object",
+  "required": ["result_type", "data_artifacts", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "best_rm": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    "best_rm_error": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    "search_rm": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    "search_rm_error": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    "refined_rm": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    "converged_iterations": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+    "chi2_reduced": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+    "rm_archive": {"anyOf": [{"$ref": "#/$defs/ArtifactRef"}, {"type": "null"}]},
+    "data_artifacts": {"type": "array", "items": {"$ref": "#/$defs/ArtifactRef"}},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Error Codes
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+### 5.20 `toa_extract`
 
 **Purpose**: Extracts TOAs from an archive against a standard profile and produces a TEMPO `.tim` file.
 
@@ -2014,7 +2311,7 @@ Semantic validation:
 
 ---
 
-### 5.19 `timing_fit`
+### 5.21 `timing_fit`
 
 **Purpose**: Runs a timing fit on `.par` + `.tim` with PINT or tempo2, returning the updated `.par`, fit statistics, residuals, and residual plots.
 
@@ -2151,7 +2448,7 @@ Semantic validation:
 
 ---
 
-### 5.20 `timing_diagnose`
+### 5.22 `timing_diagnose`
 
 **Purpose**: Runs residual and model diagnostics on existing `.par` + `.tim` without refitting. Can check outliers, DM variations, JUMPs, and the residual distribution.
 
@@ -2270,7 +2567,7 @@ Semantic validation:
 
 ---
 
-### 5.21 `artifact_list`
+### 5.23 `artifact_list`
 
 **Purpose**: Lists artifacts in the current workspace, with paging by kind, time, and cursor.
 
@@ -2342,7 +2639,7 @@ Semantic validation:
 
 ---
 
-### 5.22 `job_get`
+### 5.24 `job_get`
 
 **Purpose**: Queries the status and result of an asynchronous job. Fallback used only when the client does not support the MCP Tasks extension.
 
@@ -2390,7 +2687,7 @@ Semantic validation:
 
 ---
 
-### 5.23 `job_cancel`
+### 5.25 `job_cancel`
 
 **Purpose**: Requests cancellation of an asynchronous job. Cancellation is cooperative: the server sends `SIGTERM` first, and `SIGKILL`s the process group if it is still running after the grace period.
 
