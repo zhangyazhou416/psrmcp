@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/profile_smooth.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Archive to denoise (read-only input)"
+    },
+    "root": {
+      "type": "string"
+    },
+    "method": {
+      "enum": [
+        "sinc",
+        "wavelet"
+      ],
+      "default": "sinc",
+      "description": "Adaptive filter: sinc (Fourier-domain harmonic keeping) or wavelet (-W)"
+    },
+    "wavelet_type": {
+      "type": "string",
+      "pattern": "^[HDBU][A-Z0-9]{1,5}$",
+      "default": "UD8",
+      "description": "Wavelet family+order code (H/D/B families, U prefix = undecimated); only used with method=wavelet"
+    },
+    "wavelet_cutoff": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "default": 1.3,
+      "description": "Keep wavelet components above cutoff*sqrt(2*ln(nbin)) sigma; only used with method=wavelet"
+    },
+    "normalize": {
+      "type": "boolean",
+      "default": false,
+      "description": "Normalize pol 0 to unit sum-of-squares (other polarizations scaled by the same factor) (-n)"
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from psrmcp.errors import ErrorCode
 from psrmcp.models.common import BackendInfo
 
@@ -637,3 +639,243 @@ async def test_calibrator_database_builds_and_parses(ctx, registry, tmp_path, mo
     assert out.is_error is True
     assert out.structured_content["error"]["code"] == ErrorCode.PROCESS_FAILED.value
     assert "No calibrators found" in out.structured_content["error"]["message"]
+
+
+# --------------------------------------------------------------- batch 4
+
+_PSRSPLIT_ERR_TOO_MANY = (
+    "psrsplit: error while processing split_src.ar:\n"
+    "Error::stack\nError::InvalidState\n"
+    "\tMore sub-integrations per output file requested than available in split_src.ar\n"
+)
+
+
+def _split_produce(name, cwd):
+    if name == "psrsplit" and cwd:
+        (cwd / "split_src.0000.ar").write_bytes(b"fake")
+        (cwd / "split_src.0001.ar").write_bytes(b"fake")
+
+
+async def test_archive_split_chunks_and_commits(ctx, registry, tmp_path, monkeypatch):
+    data = _archive_env(ctx, tmp_path)
+    monkeypatch.setattr("psrmcp.tools.archive._tool", lambda c, n: f"/fake/{n}")
+    runner = _ScriptedRunner({"psrsplit": (0, "", "psrsplit: writing ...")}, produce=_split_produce)
+    ctx.runner = runner
+
+    out = await registry.dispatch(
+        "archive_split", {"archive": "obs.ar", "per_subint": 4, "execution_mode": "sync"}
+    )
+    assert out.is_error is False, out.structured_content
+    body = out.structured_content
+    assert body["n_files"] == 2
+    assert all(a["artifact_id"].startswith("art_") for a in body["archives"])
+    assert body["per_subint"] == 4 and body["per_channel"] is None
+    argv = [c for c in runner.calls if c[0] == "/fake/psrsplit"][0]
+    assert argv == ["/fake/psrsplit", "-n", "4", argv[-1]] and argv[-1].endswith("split_src.ar")
+
+    # channel split and strip_extensions flag mapping
+    out = await registry.dispatch(
+        "archive_split",
+        {"archive": "obs.ar", "per_channel": 32, "strip_extensions": True,
+         "execution_mode": "sync"},
+    )
+    assert out.is_error is False
+    argv = [c for c in runner.calls if c[0] == "/fake/psrsplit"][-1]
+    assert argv == ["/fake/psrsplit", "-c", "32", "-e", argv[-1]]
+
+    # no chunking dimension given -> E_INVALID_INPUT
+    out = await registry.dispatch("archive_split", {"archive": "obs.ar", "execution_mode": "sync"})
+    assert out.is_error is True
+    assert out.structured_content["error"]["code"] == ErrorCode.INVALID_INPUT.value
+
+
+async def test_archive_split_silent_failure_envelope(ctx, registry, tmp_path, monkeypatch):
+    """psrsplit exits 0 even when -n exceeds the sub-int count; the missing
+    output files must surface, with the 'More sub-integrations' case mapped
+    to E_INVALID_INPUT."""
+    data = _archive_env(ctx, tmp_path)
+    monkeypatch.setattr("psrmcp.tools.archive._tool", lambda c, n: f"/fake/{n}")
+    ctx.runner = _ScriptedRunner({"psrsplit": (0, "", _PSRSPLIT_ERR_TOO_MANY)})
+
+    out = await registry.dispatch(
+        "archive_split", {"archive": "obs.ar", "per_subint": 5, "execution_mode": "sync"}
+    )
+    assert out.is_error is True
+    err = out.structured_content["error"]
+    assert err["code"] == ErrorCode.INVALID_INPUT.value
+    assert "sub-integrations" in err["message"]
+
+
+async def test_archive_compare_parses_chisq(ctx, registry, tmp_path, monkeypatch):
+    data = _archive_env(ctx, tmp_path)
+    (data / "ref.ar").write_bytes(b"fake")
+    monkeypatch.setattr("psrmcp.tools.archive._tool", lambda c, n: f"/fake/{n}")
+    runner = _ScriptedRunner({"psrdiff": (0, "Weighted reduced chisq: 0.000452555\n", "")})
+    ctx.runner = runner
+
+    out = await registry.dispatch(
+        "archive_compare", {"archive": "obs.ar", "reference": "ref.ar", "execution_mode": "sync"}
+    )
+    assert out.is_error is False, out.structured_content
+    body = out.structured_content
+    assert body["reduced_chisq"] == pytest.approx(0.000452555)
+    assert body["weighted"] is True and body["per_polarization"] == {}
+    argv = [c for c in runner.calls if c[0] == "/fake/psrdiff"][0]
+    assert argv[0:2] == ["/fake/psrdiff", "-W"]
+    assert argv[-2].endswith("cmp_ref.ar") and argv[-1].endswith("cmp_data.ar")
+
+    # per-polarization mode
+    runner.responses["psrdiff"] = (0, "0 0.000456705\n1 0.000448405\n", "")
+    out = await registry.dispatch(
+        "archive_compare",
+        {"archive": "obs.ar", "reference": "ref.ar", "per_polarization": True,
+         "execution_mode": "sync"},
+    )
+    assert out.is_error is False
+    body = out.structured_content
+    assert body["per_polarization"]["0"] == pytest.approx(0.000456705)
+    assert body["per_polarization"]["1"] == pytest.approx(0.000448405)
+
+    # unweighted mode uses -X
+    runner.responses["psrdiff"] = (0, "Reduced chisq: 46686.2\n", "")
+    out = await registry.dispatch(
+        "archive_compare",
+        {"archive": "obs.ar", "reference": "ref.ar", "weighted": False, "execution_mode": "sync"},
+    )
+    assert out.is_error is False
+    assert out.structured_content["reduced_chisq"] == pytest.approx(46686.2)
+    argv = [c for c in runner.calls if c[0] == "/fake/psrdiff"][-1]
+    assert "-X" in argv
+
+
+async def test_archive_compare_mismatch_envelope(ctx, registry, tmp_path, monkeypatch):
+    """psrdiff prints 'files differ as follows:' + reasons and exits 0 when
+    the archives are not mixable — mapped to E_INVALID_INPUT with the reason."""
+    data = _archive_env(ctx, tmp_path)
+    (data / "ref.ar").write_bytes(b"fake")
+    monkeypatch.setattr("psrmcp.tools.archive._tool", lambda c, n: f"/fake/{n}")
+    ctx.runner = _ScriptedRunner({"psrdiff": (0,
+        "files differ as follows:\n"
+        "\tnumbers of channels mismatch: 32 != 128\n", "")})
+
+    out = await registry.dispatch(
+        "archive_compare", {"archive": "obs.ar", "reference": "ref.ar", "execution_mode": "sync"}
+    )
+    assert out.is_error is True
+    err = out.structured_content["error"]
+    assert err["code"] == ErrorCode.INVALID_INPUT.value
+    assert "channels mismatch" in err["message"]
+
+
+async def test_profile_smooth_commits(ctx, registry, tmp_path, monkeypatch):
+    data = _archive_env(ctx, tmp_path)
+    monkeypatch.setattr("psrmcp.tools.profile._psrchive_tool", lambda c, n: f"/fake/{n}")
+
+    def _smooth_produce(name, cwd):
+        if name == "psrsmooth" and cwd:
+            (cwd / "smooth_src.ar.sm").write_bytes(b"fake")
+
+    runner = _ScriptedRunner({"psrsmooth": (0, "", "")}, produce=_smooth_produce)
+    ctx.runner = runner
+
+    out = await registry.dispatch(
+        "profile_smooth",
+        {"archive": "obs.ar", "method": "wavelet", "wavelet_type": "UD8",
+         "wavelet_cutoff": 2.0, "normalize": True, "execution_mode": "sync"},
+    )
+    assert out.is_error is False, out.structured_content
+    body = out.structured_content
+    assert body["smoothed_archive"]["artifact_id"].startswith("art_")
+    assert body["method"] == "wavelet"
+    argv = [c for c in runner.calls if c[0] == "/fake/psrsmooth"][0]
+    assert argv == ["/fake/psrsmooth", "-W", "-t", "UD8", "-c", "2.0", "-n", argv[-1]]
+
+    # sinc default emits no smoothing flags
+    out = await registry.dispatch(
+        "profile_smooth", {"archive": "obs.ar", "execution_mode": "sync"}
+    )
+    assert out.is_error is False
+    argv = [c for c in runner.calls if c[0] == "/fake/psrsmooth"][-1]
+    assert "-W" not in argv and "-n" not in argv
+
+
+async def test_profile_smooth_silent_failure_envelope(ctx, registry, tmp_path, monkeypatch):
+    data = _archive_env(ctx, tmp_path)
+    monkeypatch.setattr("psrmcp.tools.profile._psrchive_tool", lambda c, n: f"/fake/{n}")
+    ctx.runner = _ScriptedRunner({"psrsmooth": (0, "", "")})  # no output file
+
+    out = await registry.dispatch(
+        "profile_smooth", {"archive": "obs.ar", "execution_mode": "sync"}
+    )
+    assert out.is_error is True
+    err = out.structured_content["error"]
+    assert err["code"] == ErrorCode.PROCESS_FAILED.value
+    assert err["log_artifact_id"]
+
+
+_RVM_SAMPLE = (
+    "psrmodel: solving with initial guess: \n"
+    "psi_0  [fit] = 0 deg\n"
+    "beta   [fit] = 5.5 deg\n"
+    "alpha  [fit] = 45 deg\n"
+    "\nchisq=312.345/nfree=4 = 78.0863\n"
+    "psi_0=-12.5 deg\n"
+    "phi_0=140.2 deg\n"
+    "beta =6.75 deg\n"
+    "alpha=50.25 deg\n"
+)
+
+
+async def test_rvm_fit_parses_and_commits_residuals(ctx, registry, tmp_path, monkeypatch):
+    data = _archive_env(ctx, tmp_path)
+    monkeypatch.setattr("psrmcp.tools.rmfit._psrchive_tool", lambda c, n: f"/fake/{n}")
+
+    def _rvm_produce(name, cwd):
+        if name == "psrmodel" and cwd:
+            (cwd / "psrmodel_psi_residuals.txt").write_text("0.1 2.0 0.3\n")
+
+    runner = _ScriptedRunner({"psrmodel": (0, "", _RVM_SAMPLE)}, produce=_rvm_produce)
+    ctx.runner = runner
+
+    out = await registry.dispatch(
+        "rvm_fit",
+        {"archive": "obs.ar", "residuals": "psi", "use_beta": True,
+         "exclude": ["40:50"], "execution_mode": "sync"},
+    )
+    assert out.is_error is False, out.structured_content
+    body = out.structured_content
+    assert body["chisq"] == pytest.approx(312.345)
+    assert body["nfree"] == 4 and body["reduced_chisq"] == pytest.approx(78.0863)
+    assert body["psi0_deg"] == pytest.approx(-12.5)
+    assert body["beta_deg"] == pytest.approx(6.75)
+    assert body["alpha_deg"] == pytest.approx(50.25)
+    assert body["zeta_deg"] is None
+    assert body["residuals_artifact"]["artifact_id"].startswith("art_")
+    argv = [c for c in runner.calls if c[0] == "/fake/psrmodel"][0]
+    assert argv[argv.index("--exclude") + 1] == "40:50"
+    assert "--use_beta" in argv
+
+
+async def test_rvm_fit_poln_incomplete_envelope(ctx, registry, tmp_path, monkeypatch):
+    """npol<4 archives make psrmodel exit 0 with only an InvalidState note on
+    stderr — mapped to E_INVALID_INPUT so the client can fix the input."""
+    data = _archive_env(ctx, tmp_path)
+    monkeypatch.setattr("psrmcp.tools.rmfit._psrchive_tool", lambda c, n: f"/fake/{n}")
+    ctx.runner = _ScriptedRunner({"psrmodel": (0, "",
+        "Pulsar::Integration::new_PolnProfile\nError::InvalidState\n"
+        "\tincomplete polarization information\n")})
+
+    out = await registry.dispatch(
+        "rvm_fit", {"archive": "obs.ar", "execution_mode": "sync"}
+    )
+    assert out.is_error is True
+    err = out.structured_content["error"]
+    assert err["code"] == ErrorCode.INVALID_INPUT.value
+    assert "polarization" in err["message"]
+
+    # bad range syntax rejected by the input model
+    out = await registry.dispatch(
+        "rvm_fit", {"archive": "obs.ar", "exclude": ["40-50"], "execution_mode": "sync"}
+    )
+    assert out.is_error is True
+    assert out.structured_content["error"]["code"] == ErrorCode.INVALID_INPUT.value

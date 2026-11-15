@@ -1,4 +1,4 @@
-"""Output models for all 27 tools (TOOLS.md section 5 output schemas)."""
+"""Output models for all 31 tools (TOOLS.md section 5 output schemas)."""
 
 from __future__ import annotations
 
@@ -585,6 +585,112 @@ class PolarizationCalibrateResult(ToolResult):
                          + (f" (from {self.flux_calibrator_source})" if self.flux_calibrator_source else ""))
         else:
             lines.append("- flux: not applied")
+        for w in self.warnings:
+            lines.append(f"- ⚠ {w.message}")
+        return "\n".join(lines)
+
+
+class ArchiveSplitResult(ToolResult):
+    """psrsplit output: one new archive artifact per chunk. File order
+    follows psrsplit's naming (sub-int block index, then channel index
+    within the block when per_channel is used)."""
+    model_config = FORBID
+    archives: list[ArtifactRef]
+    n_files: int = Field(ge=1)
+    per_subint: int | None = None
+    per_channel: int | None = None
+    warnings: list[WarningInfo] = Field(default_factory=list)
+
+    def summarize(self) -> str:
+        lines = [f"Archive split: {self.n_files} file(s)"]
+        chunks = []
+        if self.per_subint is not None:
+            chunks.append(f"{self.per_subint} sub-int/file")
+        if self.per_channel is not None:
+            chunks.append(f"{self.per_channel} chan/file")
+        if chunks:
+            lines.append("- chunking: " + " x ".join(chunks))
+        for a in self.archives:
+            lines.append(f"- `{a.artifact_id}`")
+        for w in self.warnings:
+            lines.append(f"- ⚠ {w.message}")
+        return "\n".join(lines)
+
+
+class ArchiveCompareResult(ToolResult):
+    """psrdiff comparison of two archives: reduced chi^2 of `archive`
+    measured bin-by-bin against `reference`. per_polarization is populated
+    when per_polarization=True was requested."""
+    model_config = FORBID
+    reduced_chisq: float | None = None
+    weighted: bool = True
+    per_polarization: dict[str, float] = Field(default_factory=dict)
+    warnings: list[WarningInfo] = Field(default_factory=list)
+
+    def summarize(self) -> str:
+        if self.reduced_chisq is None:
+            lines = ["Archive comparison: no chi^2 parsed"]
+        else:
+            kind = "weighted " if self.weighted else ""
+            lines = [f"Archive comparison: {kind}reduced chi^2 = {self.reduced_chisq:.6g}"]
+        if self.per_polarization:
+            parts = ", ".join(f"pol {p}: {v:.6g}" for p, v in sorted(self.per_polarization.items()))
+            lines.append(f"- per polarization: {parts}")
+        for w in self.warnings:
+            lines.append(f"- ⚠ {w.message}")
+        return "\n".join(lines)
+
+
+class ProfileSmoothResult(ToolResult):
+    """psrsmooth output: the denoised archive as a new artifact (pol 0
+    adaptively smoothed; with sinc, other polarizations reuse the same
+    harmonic filter)."""
+    model_config = FORBID
+    smoothed_archive: ArtifactRef
+    method: str
+    warnings: list[WarningInfo] = Field(default_factory=list)
+
+    def summarize(self) -> str:
+        lines = [f"Smoothed archive ({self.method}): `{self.smoothed_archive.artifact_id}`"]
+        for w in self.warnings:
+            lines.append(f"- ⚠ {w.message}")
+        return "\n".join(lines)
+
+
+class RvmFitResult(ToolResult):
+    """psrmodel RVM fit: geometry of the emission beam in degrees —
+    alpha = magnetic-axis colatitude, beta = impact angle (when use_beta),
+    zeta = line-of-sight colatitude (otherwise), psi0 = PA at the magnetic
+    meridian, phi0 = longitude of the magnetic meridian."""
+    model_config = FORBID
+    psi0_deg: float | None = None
+    phi0_deg: float | None = None
+    alpha_deg: float | None = None
+    beta_deg: float | None = None
+    zeta_deg: float | None = None
+    chisq: float | None = None
+    nfree: int | None = None
+    reduced_chisq: float | None = None
+    residuals_artifact: ArtifactRef | None = None
+    warnings: list[WarningInfo] = Field(default_factory=list)
+
+    def summarize(self) -> str:
+        parts = []
+        if self.alpha_deg is not None:
+            parts.append(f"alpha = {self.alpha_deg:.2f}°")
+        if self.beta_deg is not None:
+            parts.append(f"beta = {self.beta_deg:.2f}°")
+        if self.zeta_deg is not None:
+            parts.append(f"zeta = {self.zeta_deg:.2f}°")
+        if self.psi0_deg is not None:
+            parts.append(f"psi0 = {self.psi0_deg:.2f}°")
+        if self.phi0_deg is not None:
+            parts.append(f"phi0 = {self.phi0_deg:.2f}°")
+        if self.reduced_chisq is not None:
+            parts.append(f"reduced chi^2 = {self.reduced_chisq:.4g}")
+        lines = ["RVM fit: " + ("; ".join(parts) if parts else "no fit values parsed")]
+        if self.residuals_artifact is not None:
+            lines.append(f"- residuals: `{self.residuals_artifact.artifact_id}`")
         for w in self.warnings:
             lines.append(f"- ⚠ {w.message}")
         return "\n".join(lines)

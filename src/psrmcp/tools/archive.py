@@ -1,8 +1,9 @@
 """archive_inspect / archive_convert / archive_merge / archive_transform /
-archive_edit (TOOLS.md 5.7-5.11)."""  # archive_convert: psrconv -o PSRFITS/Timer/ASCII
+archive_edit / archive_split / archive_compare (TOOLS.md 5.7-5.13)."""  # archive_convert: psrconv -o PSRFITS/Timer/ASCII
 
 from __future__ import annotations
 
+import re
 import shutil
 import time
 from pathlib import Path
@@ -16,17 +17,21 @@ from ..execution.runner import CancelHook
 from ..execution.workspace import utcnow
 from ..models.common import ArtifactKind, WarningInfo
 from ..models.inputs import (
+    ArchiveCompareInput,
     ArchiveConvertInput,
     ArchiveEditInput,
     ArchiveInspectInput,
     ArchiveMergeInput,
+    ArchiveSplitInput,
     ArchiveTransformInput,
 )
 from ..models.results import (
+    ArchiveCompareResult,
     ArchiveConvertResult,
     ArchiveEditResult,
     ArchiveInspectResult,
     ArchiveMergeResult,
+    ArchiveSplitResult,
     ArchiveTransformResult,
     Dimensions,
     IntegrationRow,
@@ -77,6 +82,21 @@ def register(reg: ToolRegistry) -> None:
         input_model=ArchiveEditInput,
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False),
         handler=_edit,
+    ))
+    reg.add(ToolSpec(
+        name="archive_split",
+        description="Split an archive into multiple archive artifacts via psrsplit: group sub-integrations (per_subint) and/or frequency channels (per_channel) per output file; tail remainders land in a smaller final file. The input is read-only. Long task; supports async and cancellation.",
+        input_model=ArchiveSplitInput,
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False),
+        handler=_split,
+        long_task=True,
+    ))
+    reg.add(ToolSpec(
+        name="archive_compare",
+        description="Measure the difference between two archives via psrdiff: reduced chi^2 of `archive` against `reference`, bin-by-bin (optionally per polarization). Pre-scrunching (-p/-f/-t) can reconcile mismatched dimensions before comparing.",
+        input_model=ArchiveCompareInput,
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
+        handler=_compare,
     ))
 
 
@@ -487,3 +507,145 @@ def _probe_integrations(ctx: AppContext, path: Path, limit: int, warnings: list[
         severity="warning",
     ))
     return None
+
+
+async def _split(ctx: AppContext, inp: ArchiveSplitInput, progress) -> ArchiveSplitResult:
+    started = utcnow()
+    t0 = time.monotonic()
+    psr_info = await ctx.backends.require("psrchive")
+    binary = _tool(ctx, "psrsplit")
+    resolved = ctx.resolver.resolve(inp.archive, root=inp.root, what="archive")
+
+    # psrsplit writes the chunk files next to the input (naming
+    # <stem>.%04d[_%04d].<ext>), swallowing per-file errors while exiting 0 —
+    # so run on a staged copy with a distinctive stem and count the outputs.
+    job_tmp = ctx.ws.new_job_tmp(f"split_{time.time_ns()}")
+    local_src = job_tmp / "split_src.ar"
+    shutil.copy2(resolved.resolved, local_src)
+
+    argv = psa.psrsplit_cmd(
+        binary, str(local_src),
+        per_subint=inp.per_subint,
+        per_channel=inp.per_channel,
+        strip_extensions=inp.strip_extensions,
+    )
+    progress("splitting", 0.3)
+    run = await ctx.runner.run(
+        argv, cwd=job_tmp, timeout_s=ctx.cfg.server.job_timeout_s, cancel=CancelHook()
+    )
+    chunks = sorted(job_tmp.glob(psa.psrsplit_output_glob("split_src")))
+    if run.exit_code != 0 or not chunks:
+        detail = run.stderr_tail(300)
+        m = _PSRSPLIT_TOO_MANY.search(detail)
+        if m:
+            detail = (
+                f"requested more {'sub-integrations' if 'sub-integrations' in m.group(1) else 'channels'} "
+                f"per output file than the archive holds ({m.group(1).strip()})"
+            )
+            code = ErrorCode.INVALID_INPUT
+        else:
+            code = ErrorCode.PROCESS_FAILED
+        log_id = log_artifact_from_stderr(ctx, job_key="split", stderr=run.stderr_tail(), argv=argv)
+        raise PsrmcpError(
+            code,
+            f"psrsplit produced no chunks ({len(chunks)} found): {detail}",
+            log_artifact_id=log_id,
+        )
+
+    prov = make_provenance(
+        tool="archive_split",
+        backend="psrsplit",
+        backend_version=psr_info.version,
+        params=inp.model_dump(mode="json"),
+        started=started,
+        duration_s=time.monotonic() - t0,
+        command=argv,
+    )
+    prefix = inp.output_name or "split"
+    archives = []
+    for i, chunk in enumerate(chunks):
+        archives.append(ctx.store.commit(
+            src_path=chunk,
+            filename=f"{prefix}.{i:04d}.ar",
+            kind=ArtifactKind.ARCHIVE,
+            format_name="PSRARCHIVE",
+            provenance=prov,
+            parents=[resolved.artifact_id] if resolved.artifact_id else None,
+        ))
+    progress("complete", 1.0)
+    return ArchiveSplitResult(
+        archives=archives,
+        n_files=len(archives),
+        per_subint=inp.per_subint,
+        per_channel=inp.per_channel,
+    )
+
+
+# psrsplit throws InvalidState with this text when -n/-c exceed the archive's
+# sub-integrations/channels (still exit 0; caught per-file on the real binary).
+_PSRSPLIT_TOO_MANY = re.compile(
+    r"More (sub-integrations per output file|channels per output file) requested than available in (\S+)")
+
+
+async def _compare(ctx: AppContext, inp: ArchiveCompareInput, progress) -> ArchiveCompareResult:
+    started = utcnow()
+    t0 = time.monotonic()
+    psr_info = await ctx.backends.require("psrchive")
+    binary = _tool(ctx, "psrdiff")
+    archive = ctx.resolver.resolve(inp.archive, root=inp.root, what="archive")
+    reference = ctx.resolver.resolve(inp.reference, root=inp.root, what="reference archive")
+
+    job_tmp = ctx.ws.new_job_tmp(f"diff_{time.time_ns()}")
+    local_ref = job_tmp / "cmp_ref.ar"
+    local_data = job_tmp / "cmp_data.ar"
+    shutil.copy2(reference.resolved, local_ref)
+    shutil.copy2(archive.resolved, local_data)
+
+    argv = psa.psrdiff_cmd(
+        binary, str(local_ref), str(local_data),
+        weighted=inp.weighted,
+        per_polarization=inp.per_polarization,
+        pscrunch=inp.pscrunch,
+        fscrunch=inp.fscrunch,
+        tscrunch=inp.tscrunch,
+    )
+    progress("comparing", 0.3)
+    run = await ctx.runner.run(
+        argv, cwd=job_tmp, timeout_s=ctx.cfg.server.job_timeout_s, cancel=CancelHook()
+    )
+    # Not mixable: exit 0 with "files differ as follows:" + tab-indented
+    # reasons on stdout (verified: 32 vs 128 channels printed three reasons).
+    parsed = psa.parse_psrdiff(run.stdout_text)
+    if parsed.get("mismatch"):
+        reasons = "; ".join(parsed["mismatch_reasons"]) or "archives are not mixable"
+        raise PsrmcpError(
+            ErrorCode.INVALID_INPUT,
+            f"archives cannot be compared: {reasons} "
+            "(consider pscrunch/fscrunch/tscrunch to reconcile dimensions)",
+        )
+    if run.exit_code != 0:
+        log_id = log_artifact_from_stderr(ctx, job_key="diff", stderr=run.stderr_tail(), argv=argv)
+        raise PsrmcpError(
+            ErrorCode.PROCESS_FAILED,
+            f"psrdiff failed (exit code {run.exit_code}): {run.stderr_tail(300)}",
+            log_artifact_id=log_id,
+        )
+
+    chisq = parsed.get("weighted_reduced_chisq") if inp.weighted and not inp.per_polarization \
+        else parsed.get("reduced_chisq")
+    if chisq is None and not parsed.get("per_polarization"):
+        log_id = log_artifact_from_stderr(ctx, job_key="diff", stderr=run.stderr_tail(), argv=argv)
+        raise PsrmcpError(
+            ErrorCode.PROCESS_FAILED,
+            f"psrdiff produced no chi^2 output: {run.stderr_tail(300) or 'empty stdout'}",
+            log_artifact_id=log_id,
+        )
+    if chisq is None:
+        # per-polarization mode: aggregate the pol rows into the headline
+        chisq = sum(parsed["per_polarization"].values()) / max(len(parsed["per_polarization"]), 1)
+    progress("complete", 1.0)
+    return ArchiveCompareResult(
+        reduced_chisq=chisq,
+        weighted=inp.weighted or inp.per_polarization,
+        per_polarization=parsed.get("per_polarization") or {},
+    )

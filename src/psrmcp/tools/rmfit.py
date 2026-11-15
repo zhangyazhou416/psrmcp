@@ -1,4 +1,4 @@
-"""rotation_measure_fit (TOOLS.md 5.19): rmfit rotation measure fitting."""
+"""rotation_measure_fit (TOOLS.md 5.22) + rvm_fit (5.23): rmfit/psrmodel fitting."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from ..errors import ErrorCode, PsrmcpError
 from ..execution.runner import CancelHook
 from ..execution.workspace import utcnow
 from ..models.common import ArtifactKind, WarningInfo
-from ..models.inputs import RotationMeasureFitInput
-from ..models.results import RotationMeasureFitResult
+from ..models.inputs import RvmFitInput, RotationMeasureFitInput
+from ..models.results import RotationMeasureFitResult, RvmFitResult
 from ._common import AppContext, log_artifact_from_stderr, make_provenance
 from .archive import _tool as _psrchive_tool
 from .registry import ToolRegistry, ToolSpec
@@ -31,6 +31,18 @@ def register(reg: ToolRegistry) -> None:
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
         handler=_rm_fit,
         long_task=True,
+    ))
+    reg.add(ToolSpec(
+        name="rvm_fit",
+        description="Fit the rotating vector model (psrmodel) to the position-angle swing of a "
+                    "polarimetric archive: returns alpha (magnetic-axis colatitude), beta/zeta "
+                    "(impact angle / line-of-sight colatitude), psi0, phi0 and the fit chi^2. "
+                    "Requires recoverable Stokes Q/U (npol>=4 or calibrated data); optional "
+                    "include/exclude/opm pulse-longitude ranges in degrees. Optionally saves the "
+                    "post-fit PA or Q/U residuals as a text artifact.",
+        input_model=RvmFitInput,
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
+        handler=_rvm_fit,
     ))
 
 
@@ -141,5 +153,103 @@ async def _rm_fit(ctx: AppContext, inp: RotationMeasureFitInput, progress) -> Ro
         chi2_reduced=parsed.get("chi2_reduced"),
         rm_archive=rm_archive,
         data_artifacts=data_artifacts,
+        warnings=warnings,
+    )
+
+
+async def _rvm_fit(ctx: AppContext, inp: RvmFitInput, progress) -> RvmFitResult:
+    started = utcnow()
+    t0 = time.monotonic()
+    psr_info = await ctx.backends.require("psrchive")
+    binary = _psrchive_tool(ctx, "psrmodel")
+    resolved = ctx.resolver.resolve(inp.archive, root=inp.root, what="archive")
+
+    # psrmodel writes the residual text files into the process cwd; run on a
+    # staged copy. The binary swallows per-file errors and STILL EXITS 0 —
+    # success is signalled by the "chisq=..." line, not the exit code (e.g.
+    # npol<4 archives fail with "incomplete polarization information").
+    job_tmp = ctx.ws.new_job_tmp(f"rvm_{time.time_ns()}")
+    local_src = job_tmp / "rvm_src.ar"
+    shutil.copy2(resolved.resolved, local_src)
+
+    argv = psa.psrmodel_cmd(
+        binary, str(local_src),
+        threshold_sigma=inp.threshold_sigma,
+        guess_smooth_bins=inp.guess_smooth_bins,
+        include=inp.include or None,
+        exclude=inp.exclude or None,
+        opm=inp.opm or None,
+        ortho=inp.ortho,
+        ml_gain=inp.ml_gain,
+        use_beta=inp.use_beta,
+    )
+    progress("fitting RVM", 0.3)
+    run = await ctx.runner.run(
+        argv, cwd=job_tmp, timeout_s=ctx.cfg.server.job_timeout_s, cancel=CancelHook()
+    )
+    parsed = psa.parse_psrmodel(run.stderr_text + "\n" + run.stdout_text)
+    warnings: list[WarningInfo] = []
+    if parsed.get("chisq") is None:
+        if parsed.get("poln_incomplete"):
+            raise PsrmcpError(
+                ErrorCode.INVALID_INPUT,
+                "archive has incomplete polarization information: the RVM fit "
+                "needs recoverable Stokes Q/U (npol>=4 or calibrated data)",
+            )
+        log_id = log_artifact_from_stderr(ctx, job_key="rvm", stderr=run.stderr_tail(), argv=argv)
+        raise PsrmcpError(
+            ErrorCode.PROCESS_FAILED,
+            f"psrmodel produced no RVM fit (exit code {run.exit_code}): "
+            f"{run.stderr_tail(300)}",
+            log_artifact_id=log_id,
+        )
+    if run.exit_code != 0:
+        # fit output present but the process complained — surface it
+        warnings.append(WarningInfo(
+            code="W_RVM_EXIT_NONZERO",
+            message=f"psrmodel exited {run.exit_code} after producing a fit: "
+                    f"{run.stderr_tail(200)}",
+            severity="warning",
+        ))
+
+    residuals_artifact = None
+    resid_glob = {
+        "psi": ["psrmodel_psi_residuals.txt"],
+        "stokes": ["psrmodel_QU_residuals.txt"],
+    }.get(inp.residuals, [])
+    prov = make_provenance(
+        tool="rvm_fit",
+        backend="psrmodel",
+        backend_version=psr_info.version,
+        params=inp.model_dump(mode="json"),
+        started=started,
+        duration_s=time.monotonic() - t0,
+        command=argv,
+    )
+    parents = [resolved.artifact_id] if resolved.artifact_id else None
+    for pattern in resid_glob:
+        for extra in sorted(job_tmp.glob(pattern)):
+            residuals_artifact = ctx.store.commit(
+                src_path=extra,
+                filename="rvm_psi_residuals.txt" if inp.residuals == "psi"
+                else "rvm_qu_residuals.txt",
+                kind=ArtifactKind.OTHER,
+                format_name="text",
+                provenance=prov,
+                parents=parents,
+            )
+            break
+
+    progress("complete", 1.0)
+    return RvmFitResult(
+        psi0_deg=parsed.get("psi0_deg"),
+        phi0_deg=parsed.get("phi0_deg"),
+        alpha_deg=parsed.get("alpha_deg"),
+        beta_deg=parsed.get("beta_deg"),
+        zeta_deg=parsed.get("zeta_deg"),
+        chisq=parsed.get("chisq"),
+        nfree=parsed.get("nfree"),
+        reduced_chisq=parsed.get("reduced_chisq"),
+        residuals_artifact=residuals_artifact,
         warnings=warnings,
     )

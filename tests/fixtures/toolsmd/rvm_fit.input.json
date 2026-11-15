@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/rvm_fit.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Polarimetric archive with recoverable Stokes Q/U (npol>=4 or calibrated)"
+    },
+    "root": {
+      "type": "string"
+    },
+    "threshold_sigma": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Cutoff threshold when selecting PA bins (-t)"
+    },
+    "guess_smooth_bins": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Smoothing window (phase bins) used to stabilize the first guess (-smooth)"
+    },
+    "include": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "description": "Pulse-longitude degree ranges to include in the fit, 'deg0:deg1' each (--include)"
+    },
+    "exclude": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "description": "Pulse-longitude degree ranges to exclude from the fit, 'deg0:deg1' each (--exclude)"
+    },
+    "opm": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "description": "Pulse-longitude degree ranges dominated by an orthogonal polarization mode, 'deg0:deg1' each (-o)"
+    },
+    "ortho": {
+      "type": "boolean",
+      "default": false,
+      "description": "Use the orthometric RVM parameterization (--ortho)"
+    },
+    "ml_gain": {
+      "type": "boolean",
+      "default": false,
+      "description": "Use maximum-likelihood gains (--mlgain)"
+    },
+    "use_beta": {
+      "type": "boolean",
+      "default": false,
+      "description": "Vary the impact angle beta instead of the line-of-sight colatitude zeta (--use_beta)"
+    },
+    "residuals": {
+      "enum": [
+        "none",
+        "psi",
+        "stokes"
+      ],
+      "default": "none",
+      "description": "Save post-fit residuals as a text artifact: psi (position angle) or stokes (Q/U)"
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}

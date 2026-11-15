@@ -1,4 +1,4 @@
-"""single_pulse_analyze (TOOLS.md 5.18): psrspa single-pulse analysis."""
+"""single_pulse_analyze (TOOLS.md 5.21): psrspa single-pulse analysis."""
 
 from __future__ import annotations
 

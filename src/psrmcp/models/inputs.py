@@ -1,4 +1,4 @@
-"""Input models for all 27 tools (TOOLS.md section 5 schemas, 1:1).
+"""Input models for all 31 tools (TOOLS.md section 5 schemas, 1:1).
 
 All models forbid extra properties, mirroring `additionalProperties: false`.
 """
@@ -458,6 +458,107 @@ class CalibratorDatabaseInput(BaseModel):
     root: str | None = None
     output_name: str | None = Field(default=None, max_length=128)
     execution_mode: ExecutionMode = ExecutionMode.AUTO
+
+
+class ArchiveSplitInput(BaseModel):
+    """Split an archive into multiple archive artifacts with psrsplit:
+    `per_subint` (-n) groups sub-integrations per output file, `per_channel`
+    (-c) groups frequency channels (at least one must be given; remainders
+    at the tail are allowed — the last file just holds fewer). The input
+    archive is read-only; every chunk becomes a new artifact."""
+
+    model_config = FORBID
+    archive: str
+    root: str | None = None
+    per_subint: int | None = Field(default=None, ge=1)
+    per_channel: int | None = Field(default=None, ge=1)
+    strip_extensions: bool = False
+    output_name: str | None = Field(default=None, max_length=128)
+    execution_mode: ExecutionMode = ExecutionMode.AUTO
+
+    @model_validator(mode="after")
+    def _check_chunking(self):
+        if self.per_subint is None and self.per_channel is None:
+            raise ValueError(
+                "provide at least one of per_subint (sub-integrations per "
+                "output file) or per_channel (channels per output file)"
+            )
+        return self
+
+
+class ArchiveCompareInput(BaseModel):
+    """Compare two archives with psrdiff: reduced chi^2 of `archive`
+    measured against `reference` (bin-by-bin profile difference). Optional
+    pre-scrunching brings mismatched dimensions down to a common shape
+    (-p polarizations, -f channels, -t sub-integrations)."""
+
+    model_config = FORBID
+    archive: str
+    reference: str
+    root: str | None = None
+    weighted: bool = True
+    per_polarization: bool = False
+    pscrunch: bool = False
+    fscrunch: bool = False
+    tscrunch: bool = False
+    execution_mode: ExecutionMode = ExecutionMode.AUTO
+
+
+class ProfileSmoothInput(BaseModel):
+    """Denoise a profile archive with psrsmooth's adaptive filters: `sinc`
+    (Fourier-domain, keeps the strongest harmonics; the same filter is
+    applied to all polarizations) or `wavelet` (-W, family/order via
+    wavelet_type, e.g. UD8/D4/B103; cutoff = keep components above
+    wavelet_cutoff * sqrt(2*ln(nbin)) sigma). The smoothed archive is a
+    new artifact."""
+
+    model_config = FORBID
+    archive: str
+    root: str | None = None
+    method: Literal["sinc", "wavelet"] = "sinc"
+    wavelet_type: str = Field(default="UD8", pattern=r"^[HDBU][A-Z0-9]{1,5}$")
+    wavelet_cutoff: float = Field(default=1.3, gt=0)
+    normalize: bool = False
+    output_name: str | None = Field(default=None, max_length=128)
+    execution_mode: ExecutionMode = ExecutionMode.AUTO
+
+
+class RvmFitInput(BaseModel):
+    """Fit the rotating vector model (RVM) to the position-angle swing of a
+    polarimetric archive with psrmodel (requires full-Stokes data: npol>=4,
+    or a calibrated archive with recoverable Q/U). The archive is
+    tscrunched/fscrunched internally and its PA curve is corrected to
+    infinite frequency using the header RM. Phase ranges ("deg0:deg1") are
+    in pulse-longitude degrees; include/exclude select the constrained
+    bins, opm marks orthogonally-polarized-mode ranges. `use_beta` varies
+    the impact angle beta instead of the line-of-sight colatitude zeta."""
+
+    model_config = FORBID
+    archive: str
+    root: str | None = None
+    threshold_sigma: float | None = Field(default=None, gt=0)
+    guess_smooth_bins: int | None = Field(default=None, ge=1)
+    include: list[str] = Field(default=[], max_length=8)
+    exclude: list[str] = Field(default=[], max_length=8)
+    opm: list[str] = Field(default=[], max_length=8)
+    ortho: bool = False
+    ml_gain: bool = False
+    use_beta: bool = False
+    residuals: Literal["none", "psi", "stokes"] = "none"
+    execution_mode: ExecutionMode = ExecutionMode.AUTO
+
+    @model_validator(mode="after")
+    def _check_ranges(self) -> "RvmFitInput":
+        import re as _re
+        ok = _re.compile(r"^-?\d+(\.\d+)?:-?\d+(\.\d+)?$")
+        for name in ("include", "exclude", "opm"):
+            for r in getattr(self, name):
+                if not ok.fullmatch(r):
+                    raise ValueError(
+                        f"{name} ranges must be 'deg0:deg1' pulse-longitude "
+                        f"degrees (got {r!r})"
+                    )
+        return self
 
 
 class ToaExtractInput(BaseModel):

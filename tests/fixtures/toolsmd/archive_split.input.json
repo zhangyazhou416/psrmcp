@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/archive_split.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Archive to split (read-only input)"
+    },
+    "root": {
+      "type": "string"
+    },
+    "per_subint": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Sub-integrations per output file (-n)"
+    },
+    "per_channel": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Frequency channels per output file (-c)"
+    },
+    "strip_extensions": {
+      "type": "boolean",
+      "default": false,
+      "description": "Strip calibrator extensions from the outputs to save disk space (-e)"
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}

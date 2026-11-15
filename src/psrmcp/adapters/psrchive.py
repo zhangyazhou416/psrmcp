@@ -8,6 +8,7 @@ against recorded output samples.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 # pat -A choices that the installed pat accepts (PACE does NOT exist).
@@ -798,3 +799,213 @@ def parse_dbase_entries(text: str) -> list[dict[str, Any]]:
             "receiver": receiver,
         })
     return entries
+
+
+# ---------------------------------------------------------------------------
+# psrsplit / psrsmooth / psrdiff / psrmodel
+# (all verified on the installed stack on 2026-11-15; all four share
+# PSRCHIVE's silent-failure contract: per-file errors are caught inside the
+# binary and the process still exits 0 — callers must check the produced
+# output file(s) / parsed result markers, not the exit code)
+# ---------------------------------------------------------------------------
+
+def psrsplit_cmd(binary: str, source: str, *, per_subint: int | None = None,
+                 per_channel: int | None = None,
+                 strip_extensions: bool = False) -> list[str]:
+    # -n sub-integrations per output file, -c channels per output file
+    # (at least one required; -c alone keeps all sub-ints per file, and
+    # remainders at the tail are allowed). -e strips calibrator extensions
+    # from the outputs to save disk space. No -O: outputs are written next
+    # to the (staged) input, which keeps them inside the job tmp dir.
+    args = [binary]
+    if per_subint is not None:
+        args += ["-n", str(per_subint)]
+    if per_channel is not None:
+        args += ["-c", str(per_channel)]
+    if strip_extensions:
+        args.append("-e")
+    args.append(source)
+    return args
+
+
+def psrsplit_output_glob(stem: str) -> str:
+    """Glob for psrsplit outputs of staged input `<stem>.ar`: names are
+    `<stem>.%04d.ar` (sub-int blocks) or `<stem>.%04d_%04d.ar`
+    (channel index _ block index), both of which the input itself never
+    matches (verified: split of obs.ar gave obs.0000_0000.ar...)."""
+    return f"{stem}.[0-9]*.ar"
+
+
+def psrsmooth_cmd(binary: str, source: str, *, method: str = "sinc",
+                  wavelet_type: str = "UD8", wavelet_cutoff: float = 1.3,
+                  normalize: bool = False) -> list[str]:
+    # Adaptive Sinc smoothing is the default; -W switches to the wavelet
+    # filter (-t family+order code, -c cutoff factor in sigmas). -n
+    # normalizes pol 0 to unit sum-of-squares (other pols scaled by the
+    # same factor). Output = <source> + ".sm" (APPENDED, not replaced;
+    # the process is otherwise completely silent — nothing on stdout or
+    # stderr on success, verified on the real binary).
+    args = [binary]
+    if method == "wavelet":
+        args += ["-W", "-t", wavelet_type, "-c", str(wavelet_cutoff)]
+    if normalize:
+        args.append("-n")
+    args.append(source)
+    return args
+
+
+def psrdiff_cmd(binary: str, reference: str, data: str, *,
+                weighted: bool = True, per_polarization: bool = False,
+                pscrunch: bool = False, fscrunch: bool = False,
+                tscrunch: bool = False) -> list[str]:
+    # diff_two(reference, data): the FIRST file is the fixed reference,
+    # the chi^2 is measured on the second. -W prints the weighted reduced
+    # chi^2 ("Weighted reduced chisq: X"), -w pol adds one "<ipol> <X>"
+    # line per polarization (only "pol" is implemented in this build; -w
+    # chan prints nothing), -X the unweighted chi^2. -p/-f/-t pre-scrunch.
+    # When the archives are not mixable psrdiff prints
+    # "files differ as follows:" + tab-indented reasons and STILL exits 0.
+    args = [binary]
+    if per_polarization:
+        args += ["-w", "pol"]
+    elif weighted:
+        args.append("-W")
+    else:
+        args.append("-X")
+    if pscrunch:
+        args.append("-p")
+    if fscrunch:
+        args.append("-f")
+    if tscrunch:
+        args.append("-t")
+    args += [reference, data]
+    return args
+
+
+def parse_psrdiff(text: str) -> dict[str, Any]:
+    """Parse psrdiff stdout (the -W/-X/-w pol text contract). Returns
+    weighted_reduced_chisq / reduced_chisq (floats), per_polarization
+    ({"0": x, "1": y}), and mismatch + mismatch_reasons when the archives
+    are not mixable ("files differ as follows:" + indented lines)."""
+    out: dict[str, Any] = {
+        "reduced_chisq": None,
+        "weighted_reduced_chisq": None,
+        "per_polarization": {},
+        "mismatch": False,
+        "mismatch_reasons": [],
+    }
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+        if stripped.startswith("Weighted reduced chisq:"):
+            try:
+                out["weighted_reduced_chisq"] = float(stripped.split(":", 1)[1])
+            except (IndexError, ValueError):
+                pass
+        elif stripped.startswith("Reduced chisq:"):
+            try:
+                out["reduced_chisq"] = float(stripped.split(":", 1)[1])
+            except (IndexError, ValueError):
+                pass
+        elif stripped == "files differ as follows:":
+            out["mismatch"] = True
+            out["mismatch_reasons"] = [
+                ln.strip() for ln in lines[i + 1:] if ln.startswith("\t") and ln.strip()
+            ]
+        else:
+            # -w pol rows: "<ipol> <chisq>" (ipol is a small int)
+            tok = stripped.split()
+            if len(tok) == 2 and tok[0].isdigit():
+                try:
+                    out["per_polarization"][tok[0]] = float(tok[1])
+                except ValueError:
+                    pass
+        i += 1
+    return out
+
+
+def psrmodel_cmd(binary: str, source: str, *, threshold_sigma: float | None = None,
+                 guess_smooth_bins: int | None = None,
+                 exclude: list[str] | None = None,
+                 include: list[str] | None = None,
+                 opm: list[str] | None = None,
+                 ortho: bool = False, ml_gain: bool = False,
+                 use_beta: bool = False) -> list[str]:
+    # Non-interactive RVM fit: NO plot flags (-d/-G/-l/-L/-pm/-c are the
+    # PGPLOT paths). -t threshold sigma; "smooth" stabilises the first
+    # guess; --include/--exclude/-o(OPM) take "deg0:deg1" ranges;
+    # --ortho switches to the orthometric parameterization; --mlgain uses
+    # maximum-likelihood gains; --use_beta varies beta instead of zeta.
+    args = [binary]
+    if threshold_sigma is not None:
+        args += ["-t", str(threshold_sigma)]
+    if guess_smooth_bins is not None:
+        args += ["-smooth", str(guess_smooth_bins)]
+    for r in include or []:
+        args += ["--include", r]
+    for r in exclude or []:
+        args += ["--exclude", r]
+    for r in opm or []:
+        args += ["-o", r]
+    if ortho:
+        args.append("--ortho")
+    if ml_gain:
+        args.append("--mlgain")
+    if use_beta:
+        args.append("--use_beta")
+    args.append(source)
+    return args
+
+
+def parse_psrmodel(text: str) -> dict[str, Any]:
+    """Parse psrmodel's combined stderr+stdout for a completed RVM fit.
+
+    Fit results go to STDERR (stdout stays empty): a
+    "chisq=<v>/nfree=<n> = <reduced>" line followed by the fitted values
+    in degrees — "psi_0=<v> deg", "phi_0=<v> deg", then "beta =<v> deg"
+    OR "zeta =<v> deg" (note the space) and "alpha=<v> deg". The
+    pre-solve guess block prints the same keys as "psi_0  [fit] = <v> deg",
+    which the key=value regexes below do NOT match, so last-match wins
+    picks the post-fit block. On unusable polarization data the binary
+    prints "incomplete polarization information" and exits 0 WITHOUT any
+    fit output — callers must treat a missing chisq as failure."""
+    out: dict[str, Any] = {
+        "chisq": None,
+        "nfree": None,
+        "reduced_chisq": None,
+        "psi0_deg": None,
+        "phi0_deg": None,
+        "alpha_deg": None,
+        "beta_deg": None,
+        "zeta_deg": None,
+        "poln_incomplete": False,
+    }
+    for line in text.splitlines():
+        stripped = line.strip()
+        if "incomplete polarization information" in stripped:
+            out["poln_incomplete"] = True
+        if out["chisq"] is None:
+            m = _PSRMODEL_CHISQ.search(stripped)
+            if m:
+                out["chisq"] = float(m.group(1))
+                out["nfree"] = int(m.group(2))
+                out["reduced_chisq"] = float(m.group(3))
+                continue
+        for key, field in _PSRMODEL_KEYS:
+            m = _PSRMODEL_PARAM[key].match(stripped)
+            if m:
+                out[field] = float(m.group(1))
+    return out
+
+
+_PSRMODEL_CHISQ = re.compile(
+    r"chisq=([-+\d.eE]+)\s*/\s*nfree=(\d+)\s*=\s*([-+\d.eE]+)")
+_PSRMODEL_PARAM: dict[str, re.Pattern[str]] = {
+    key: re.compile(rf"^{key}\s*=\s*([-+\d.eE]+)\s*deg$")
+    for key in ("psi_0", "phi_0", "alpha", "beta", "zeta")
+}
+_PSRMODEL_KEYS: tuple[tuple[str, str], ...] = (
+    ("psi_0", "psi0_deg"), ("phi_0", "phi0_deg"), ("alpha", "alpha_deg"),
+    ("beta", "beta_deg"), ("zeta", "zeta_deg"),
+)

@@ -491,3 +491,106 @@ def test_parse_dbase_entries():
     # interpolator entries carry an MJD range and no nchan
     assert entries[2]["nchan"] is None and "-" in entries[2]["mjd"]
     assert psa.parse_dbase_entries("Pulsar::Database # of entries = 0\n") == []
+
+
+# ---------------------------------------------------------------------------
+
+def test_psrsplit_cmd_contract():
+    assert psa.psrsplit_cmd("psrsplit", "obs.ar", per_subint=5) == \
+        ["psrsplit", "-n", "5", "obs.ar"]
+    assert psa.psrsplit_cmd("psrsplit", "obs.ar", per_channel=32) == \
+        ["psrsplit", "-c", "32", "obs.ar"]
+    assert psa.psrsplit_cmd("psrsplit", "obs.ar", per_subint=5, per_channel=32,
+                            strip_extensions=True) == \
+        ["psrsplit", "-n", "5", "-c", "32", "-e", "obs.ar"]
+    # output glob must not match the staged input itself
+    assert psa.psrsplit_output_glob("split_src") == "split_src.[0-9]*.ar"
+
+
+def test_psrsmooth_cmd_contract():
+    assert psa.psrsmooth_cmd("psrsmooth", "obs.ar") == ["psrsmooth", "obs.ar"]
+    assert psa.psrsmooth_cmd("psrsmooth", "obs.ar", normalize=True) == \
+        ["psrsmooth", "-n", "obs.ar"]
+    assert psa.psrsmooth_cmd("psrsmooth", "obs.ar", method="wavelet",
+                             wavelet_type="D4", wavelet_cutoff=2.5) == \
+        ["psrsmooth", "-W", "-t", "D4", "-c", "2.5", "obs.ar"]
+
+
+def test_psrdiff_cmd_contract():
+    assert psa.psrdiff_cmd("psrdiff", "ref.ar", "data.ar") == \
+        ["psrdiff", "-W", "ref.ar", "data.ar"]
+    assert psa.psrdiff_cmd("psrdiff", "ref.ar", "data.ar", weighted=False) == \
+        ["psrdiff", "-X", "ref.ar", "data.ar"]
+    assert psa.psrdiff_cmd("psrdiff", "ref.ar", "data.ar", per_polarization=True) == \
+        ["psrdiff", "-w", "pol", "ref.ar", "data.ar"]
+    assert psa.psrdiff_cmd("psrdiff", "ref.ar", "data.ar",
+                           pscrunch=True, fscrunch=True, tscrunch=True) == \
+        ["psrdiff", "-W", "-p", "-f", "-t", "ref.ar", "data.ar"]
+
+
+def test_parse_psrdiff_output():
+    weighted = psa.parse_psrdiff("Weighted reduced chisq: 0.000452555\n")
+    assert weighted["weighted_reduced_chisq"] == pytest.approx(0.000452555)
+    assert weighted["reduced_chisq"] is None and not weighted["mismatch"]
+
+    unweighted = psa.parse_psrdiff("Reduced chisq: 46686.2\n")
+    assert unweighted["reduced_chisq"] == pytest.approx(46686.2)
+
+    perpol = psa.parse_psrdiff("0 0.000456705\n1 0.000448405\n")
+    assert perpol["per_polarization"] == {"0": pytest.approx(0.000456705),
+                                          "1": pytest.approx(0.000448405)}
+
+    mixed = psa.parse_psrdiff(
+        "files differ as follows:\n"
+        "\tnumbers of channels mismatch: 32 != 128\n"
+        "\tcentre frequency mismatch: 1460.000000 and 1412.000000\n")
+    assert mixed["mismatch"]
+    assert len(mixed["mismatch_reasons"]) == 2
+    assert "channels mismatch" in mixed["mismatch_reasons"][0]
+
+
+def test_psrmodel_cmd_contract():
+    assert psa.psrmodel_cmd("psrmodel", "obs.ar") == ["psrmodel", "obs.ar"]
+    assert psa.psrmodel_cmd("psrmodel", "obs.ar", threshold_sigma=3.0,
+                            guess_smooth_bins=8) == \
+        ["psrmodel", "-t", "3.0", "-smooth", "8", "obs.ar"]
+    assert psa.psrmodel_cmd("psrmodel", "obs.ar",
+                            include=["10:20"], exclude=["40:50"], opm=["60:70"],
+                            ortho=True, ml_gain=True, use_beta=True) == \
+        ["psrmodel", "--include", "10:20", "--exclude", "40:50", "-o", "60:70",
+         "--ortho", "--mlgain", "--use_beta", "obs.ar"]
+
+
+def test_parse_psrmodel_output():
+    sample = (
+        "psrmodel: solving with initial guess: \n"
+        "psi_0  [fit] = 0 deg\n"
+        "phi_0  [fit] = 123.4 deg\n"
+        "beta   [fit] = 5.5 deg\n"
+        "alpha  [fit] = 45 deg\n"
+        "\n"
+        "chisq=312.345/nfree=4 = 78.0863\n"
+        "psi_0=-12.5 deg\n"
+        "phi_0=140.2 deg\n"
+        "beta =6.75 deg\n"
+        "alpha=50.25 deg\n"
+    )
+    parsed = psa.parse_psrmodel(sample)
+    assert parsed["chisq"] == pytest.approx(312.345)
+    assert parsed["nfree"] == 4
+    assert parsed["reduced_chisq"] == pytest.approx(78.0863)
+    # post-fit values win over the [fit] guess block (also negative psi_0)
+    assert parsed["psi0_deg"] == pytest.approx(-12.5)
+    assert parsed["phi0_deg"] == pytest.approx(140.2)
+    assert parsed["beta_deg"] == pytest.approx(6.75)
+    assert parsed["alpha_deg"] == pytest.approx(50.25)
+    assert parsed["zeta_deg"] is None
+
+    zeta_sample = "chisq=12/2 = 6\nzeta =30.5 deg\nalpha=60 deg\npsi_0=1 deg\nphi_0=2 deg\n"
+    parsed = psa.parse_psrmodel(zeta_sample)
+    assert parsed["zeta_deg"] == pytest.approx(30.5) and parsed["beta_deg"] is None
+
+    failed = psa.parse_psrmodel(
+        "Pulsar::FaradayRotation::execute1\nError::InvalidState\n"
+        "\tincomplete polarization information\n")
+    assert failed["chisq"] is None and failed["poln_incomplete"]

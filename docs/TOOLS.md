@@ -412,14 +412,18 @@ The following `$defs` are referenced by all tool schemas. Implementations may ge
 | `archive_merge` | false | false | true | false | yes |
 | `archive_transform` | false | false | true | false | yes |
 | `archive_edit` | false | false | true | false | no |
+| `archive_split` | false | false | true | false | yes |
+| `archive_compare` | true | false | true | false | no |
 | `dedisperse` | false | false | true | false | yes |
 | `rfi_scan` | true | false | true | false | no |
 | `rfi_zap` | false | false | true | false | no |
 | `profile_standardize` | false | false | true | false | no |
 | `profile_measure` | true | false | true | false | no |
 | `profile_optimize` | true | false | true | false | yes |
+| `profile_smooth` | false | false | true | false | yes |
 | `single_pulse_analyze` | true | false | true | false | yes |
 | `rotation_measure_fit` | true | false | true | false | yes |
+| `rvm_fit` | true | false | true | false | no |
 | `polarization_calibrate` | false | false | true | false | yes |
 | `calibrator_database` | false | false | true | false | yes |
 | `toa_extract` | false | false | true | false | yes |
@@ -1387,7 +1391,191 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.12 `dedisperse`
+### 5.12 `archive_split`
+
+**Purpose**: Split an archive into multiple archive artifacts with psrsplit: `per_subint` (-n) groups sub-integrations per output file and `per_channel` (-c) groups frequency channels (at least one must be given; both may be combined, and tail remainders land in a smaller final file). `strip_extensions` (-e) drops calibrator extensions from the outputs to save disk space. psrsplit catches per-file errors internally and still exits 0, so success is verified by the produced chunk files; asking for more sub-integrations/channels per file than the archive holds surfaces as `E_INVALID_INPUT`. Output file order follows psrsplit's naming (sub-int block index, then channel index within the block when `per_channel` is used); every chunk is committed with the input archive as its provenance parent.
+
+**Backend**: psrsplit
+**Long-running**: yes
+**Annotations**: `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### Input Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/archive_split.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Archive to split (read-only input)"
+    },
+    "root": {
+      "type": "string"
+    },
+    "per_subint": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Sub-integrations per output file (-n)"
+    },
+    "per_channel": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Frequency channels per output file (-c)"
+    },
+    "strip_extensions": {
+      "type": "boolean",
+      "default": false,
+      "description": "Strip calibrator extensions from the outputs to save disk space (-e)"
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Output Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/archive_split.output.json",
+  "type": "object",
+  "required": ["result_type", "archives", "n_files", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "archives": {"type": "array", "items": {"$ref": "#/$defs/ArtifactRef"}},
+    "n_files": {"type": "integer", "minimum": 1},
+    "per_subint": {"type": ["integer", "null"], "minimum": 1},
+    "per_channel": {"type": ["integer", "null"], "minimum": 1},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Error Codes
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+### 5.13 `archive_compare`
+
+**Purpose**: Measure the difference between two archives with psrdiff: the reduced chi^2 of `archive` measured bin-by-bin against `reference` (psrdiff's file A is the fixed reference, file B the data). `weighted` uses psrdiff's variance-weighted chi^2 (`-W`, default), `weighted=false` the unweighted one (`-X`), and `per_polarization` reports one value per polarization (`-w pol`; `weighted` is implied). Optional pre-scrunching reconciles mismatched dimensions before comparing (`pscrunch` -p, `fscrunch` -f, `tscrunch` -t). When the archives are not mixable, psrdiff prints "files differ as follows:" with the reasons and still exits 0; psrmcp surfaces the reasons as `E_INVALID_INPUT` (hint: apply the pre-scrunching flags).
+
+**Backend**: psrdiff
+**Long-running**: no
+**Annotations**: `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### Input Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/archive_compare.input.json",
+  "type": "object",
+  "required": [
+    "archive",
+    "reference"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Archive under test (its profiles are measured against the reference)"
+    },
+    "reference": {
+      "type": "string",
+      "description": "Reference archive the chi^2 is measured against (psrdiff file A)"
+    },
+    "root": {
+      "type": "string"
+    },
+    "weighted": {
+      "type": "boolean",
+      "default": true,
+      "description": "Weight by profile variances (-W); false uses the unweighted chi^2 (-X)"
+    },
+    "per_polarization": {
+      "type": "boolean",
+      "default": false,
+      "description": "Report the weighted reduced chi^2 for each polarization (-w pol)"
+    },
+    "pscrunch": {
+      "type": "boolean",
+      "default": false,
+      "description": "Sum polarizations before comparing (-p)"
+    },
+    "fscrunch": {
+      "type": "boolean",
+      "default": false,
+      "description": "Reduce to a common channel count before comparing (-f)"
+    },
+    "tscrunch": {
+      "type": "boolean",
+      "default": false,
+      "description": "Sum sub-integrations before comparing (-t)"
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Output Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/archive_compare.output.json",
+  "type": "object",
+  "required": ["result_type", "weighted", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "reduced_chisq": {"type": ["number", "null"]},
+    "weighted": {"type": "boolean"},
+    "per_polarization": {"type": "object", "additionalProperties": {"type": "number"}},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Error Codes
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+### 5.14 `dedisperse`
 
 **Purpose**: Applies coherent or incoherent dedispersion and folds the data with dspsr. Coherent dedispersion requires a matching ephemeris.
 
@@ -1508,7 +1696,7 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.13 `rfi_scan`
+### 5.15 `rfi_scan`
 
 **Purpose**: Analyses per-channel statistics of an archive and produces a suggested bad-channel mask. Read-only; does not modify data.
 
@@ -1587,7 +1775,7 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.14 `rfi_zap`
+### 5.16 `rfi_zap`
 
 **Purpose**: Applies a channel mask to an archive, producing a new archive. Supports an explicit channel list or an automatic method.
 
@@ -1690,7 +1878,7 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.15 `profile_standardize`
+### 5.17 `profile_standardize`
 
 **Purpose**: Produces a standard profile from an archive for use in TOA extraction.
 
@@ -1753,7 +1941,7 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.16 `profile_measure`
+### 5.18 `profile_measure`
 
 **Purpose**: Measures profile metrics of an archive, such as S/N, FWHM, flux density, and polarization parameters. Read-only.
 
@@ -1842,7 +2030,7 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.17 `profile_optimize`
+### 5.19 `profile_optimize`
 
 **Purpose**: Search period and DM for the maximum profile S/N (pdmp). Reports the best period (ms) and DM with uncertainties as corrections to apply; the input archive is never modified.
 
@@ -1910,7 +2098,102 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.18 `single_pulse_analyze`
+### 5.20 `profile_smooth`
+
+**Purpose**: Denoise a profile archive with psrsmooth's adaptive filters: `sinc` (default; Fourier-domain, keeps the strongest harmonics, the same filter is applied to all polarizations) or `wavelet` (`-W`; `wavelet_type` selects family+order, e.g. UD8/D4/B103, `wavelet_cutoff` keeps components above cutoff*sqrt(2*ln(nbin)) sigma). `normalize` scales pol 0 to unit sum-of-squares (other polarizations get the same factor). The denoised archive is committed as a new artifact with the input as provenance parent — a natural step before `toa_extract`/`timing_fit`. psrsmooth is completely silent on success (no stdout/stderr at all), so success is verified by the `.sm` output file.
+
+**Backend**: psrsmooth
+**Long-running**: yes
+**Annotations**: `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### Input Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/profile_smooth.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Archive to denoise (read-only input)"
+    },
+    "root": {
+      "type": "string"
+    },
+    "method": {
+      "enum": [
+        "sinc",
+        "wavelet"
+      ],
+      "default": "sinc",
+      "description": "Adaptive filter: sinc (Fourier-domain harmonic keeping) or wavelet (-W)"
+    },
+    "wavelet_type": {
+      "type": "string",
+      "pattern": "^[HDBU][A-Z0-9]{1,5}$",
+      "default": "UD8",
+      "description": "Wavelet family+order code (H/D/B families, U prefix = undecimated); only used with method=wavelet"
+    },
+    "wavelet_cutoff": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "default": 1.3,
+      "description": "Keep wavelet components above cutoff*sqrt(2*ln(nbin)) sigma; only used with method=wavelet"
+    },
+    "normalize": {
+      "type": "boolean",
+      "default": false,
+      "description": "Normalize pol 0 to unit sum-of-squares (other polarizations scaled by the same factor) (-n)"
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Output Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/profile_smooth.output.json",
+  "type": "object",
+  "required": ["result_type", "smoothed_archive", "method", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "smoothed_archive": {"$ref": "#/$defs/ArtifactRef"},
+    "method": {"enum": ["sinc", "wavelet"]},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Error Codes
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+### 5.21 `single_pulse_analyze`
 
 **Purpose**: Single-pulse analysis (psrspa). At least one analysis mode is required, and the modes split into two exclusive groups: (a) phase-resolved histograms (flux / polarisation degree / PA / linear / circular), maximum amplitude inside phase ranges, and linear-vs-PA scatter data; (b) per-pulse detection (`find_pulses`, giant-pulse search with an allowlisted finder algorithm) — psrspa's `-a` returns early and silently skips group (a), so the tool rejects the combination up front. Phase-resolved histograms are written one file per phase bin in the requested range (e.g. 411 files for range 0.3-0.7 on nbin=1024); they are bundled into a single text artifact with `# >>> <filename>` section headers. Max-amplitude entries carry phase bin indices (not turns), verified against the installed build. Histogram modes require a psrspa build with GSL support.
 
@@ -2077,7 +2360,7 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.19 `rotation_measure_fit`
+### 5.22 `rotation_measure_fit`
 
 **Purpose**: Fit the rotation measure (rmfit) of a calibrated, tscrunched, dedispersed archive. Methods (at least one): brute-force search over trial RMs (`brute_force` for auto bounds or `rm_range` for explicit `min,max,steps` bounds — mutually exclusive), iterative two-halves-of-band refinement (`refine`), or the quadratic method by Noutsos et al. 2008 (`quadratic_window` / `quadratic_per_bin`, phase windows in turns). `save_rm_archive=true` additionally writes a new archive artifact with the per-sub-int auxiliary RM applied. rmfit's text output is parsed defensively; RM values that cannot be parsed are reported via `W_RMFIT_UNPARSED`.
 
@@ -2205,7 +2488,138 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.20 `polarization_calibrate`
+### 5.23 `rvm_fit`
+
+**Purpose**: Fit the rotating vector model to the position-angle swing of a polarimetric archive with psrmodel. The archive is tscrunched/fscrunched internally, converted to Stokes, and its PA curve corrected to infinite frequency using the header RM; the fit returns `alpha` (magnetic-axis colatitude), `beta` (`use_beta=true`) or `zeta` (line-of-sight colatitude), `psi0`/`phi0`, and the fit chi^2 (`chisq`, `nfree`, `reduced_chisq`), all in degrees. Phase ranges (`include`/`exclude`/`opm`, each "deg0:deg1" in pulse-longitude degrees) select the constrained bins and mark orthogonal-mode ranges; `ortho` switches to the orthometric parameterization; `mlgain` uses maximum-likelihood gains; `residuals` saves the post-fit PA (`psi`) or Q/U (`stokes`) residual table as a text artifact. Requires recoverable Stokes Q/U: archives without it (npol<4, uncalibrated) make psrmodel exit 0 with only an InvalidState note on stderr, which psrmcp maps to `E_INVALID_INPUT` ("incomplete polarization information"); success is otherwise verified by the `chisq=` line, not the exit code.
+
+**Backend**: psrmodel
+**Long-running**: no
+**Annotations**: `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### Input Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/rvm_fit.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Polarimetric archive with recoverable Stokes Q/U (npol>=4 or calibrated)"
+    },
+    "root": {
+      "type": "string"
+    },
+    "threshold_sigma": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Cutoff threshold when selecting PA bins (-t)"
+    },
+    "guess_smooth_bins": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Smoothing window (phase bins) used to stabilize the first guess (-smooth)"
+    },
+    "include": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "description": "Pulse-longitude degree ranges to include in the fit, 'deg0:deg1' each (--include)"
+    },
+    "exclude": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "description": "Pulse-longitude degree ranges to exclude from the fit, 'deg0:deg1' each (--exclude)"
+    },
+    "opm": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "description": "Pulse-longitude degree ranges dominated by an orthogonal polarization mode, 'deg0:deg1' each (-o)"
+    },
+    "ortho": {
+      "type": "boolean",
+      "default": false,
+      "description": "Use the orthometric RVM parameterization (--ortho)"
+    },
+    "ml_gain": {
+      "type": "boolean",
+      "default": false,
+      "description": "Use maximum-likelihood gains (--mlgain)"
+    },
+    "use_beta": {
+      "type": "boolean",
+      "default": false,
+      "description": "Vary the impact angle beta instead of the line-of-sight colatitude zeta (--use_beta)"
+    },
+    "residuals": {
+      "enum": [
+        "none",
+        "psi",
+        "stokes"
+      ],
+      "default": "none",
+      "description": "Save post-fit residuals as a text artifact: psi (position angle) or stokes (Q/U)"
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Output Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/rvm_fit.output.json",
+  "type": "object",
+  "required": ["result_type", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "psi0_deg": {"type": ["number", "null"]},
+    "phi0_deg": {"type": ["number", "null"]},
+    "alpha_deg": {"type": ["number", "null"]},
+    "beta_deg": {"type": ["number", "null"]},
+    "zeta_deg": {"type": ["number", "null"]},
+    "chisq": {"type": ["number", "null"]},
+    "nfree": {"type": ["integer", "null"]},
+    "reduced_chisq": {"type": ["number", "null"]},
+    "residuals_artifact": {"oneOf": [{"$ref": "#/$defs/ArtifactRef"}, {"type": "null"}]},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Error Codes
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+### 5.24 `polarization_calibrate`
 
 **Purpose**: Polarimetrically (and optionally flux) calibrate a pulsar archive with pac. Exactly one calibration source: `calibrators` (PolnCal / FluxCal-On / FluxCal-Off scans; the calibrator database is rebuilt in memory per call, so each call is self-contained) or `model` (a pcm/pacv solution archive applied directly). Models: `singleaxis` (default), `polar` (`-s`), `reception` (`-S`). The `*_match` flags can only RELAX pac's matching criteria (each disables one criterion); `match_sequence` restricts to calibrators observed before/after the pulsar. pac catches per-file errors internally and still exits 0, so success is verified by the presence of the calibrated output; when polarimetric calibration succeeds but flux calibration does not, pac appends `P` to the output name and `W_PAC_POLN_ONLY` / `W_PAC_FLUXCAL_FAILED` is reported (the `P` suffix is expected and silent when `flux_calibration=false`). Model solutions run without a calibrator database, so flux calibration is skipped with `W_PAC_NO_FLUXDB`.
 
@@ -2353,7 +2767,7 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.21 `calibrator_database`
+### 5.25 `calibrator_database`
 
 **Purpose**: Build a pac calibrator database summary (`database.txt` artifact) from calibrator archive scans. Entries are indexed by header metadata (time, position, frequency, receiver) so pac can match them against pulsar observations; all entries are parsed and returned inline (`entries` with `obs_type` from the archive header, e.g. PolnCal / FluxCal-On / FluxCal-Off, plus per-type counts in `entry_types`). pac identifies calibrator files by extension, so every listed file must have one (`E_INVALID_INPUT` otherwise); the supplied extensions are added to pac's default scan set (cf/pcal/fcal/pfit) via `-u`. "No calibrators found" exits non-zero and surfaces as `E_PROCESS_FAILED`.
 
@@ -2430,7 +2844,7 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.22 `toa_extract`
+### 5.26 `toa_extract`
 
 **Purpose**: Extracts TOAs from an archive against a standard profile and produces a TEMPO `.tim` file.
 
@@ -2538,7 +2952,7 @@ Semantic validation:
 
 ---
 
-### 5.23 `timing_fit`
+### 5.27 `timing_fit`
 
 **Purpose**: Runs a timing fit on `.par` + `.tim` with PINT or tempo2, returning the updated `.par`, fit statistics, residuals, and residual plots.
 
@@ -2675,7 +3089,7 @@ Semantic validation:
 
 ---
 
-### 5.24 `timing_diagnose`
+### 5.28 `timing_diagnose`
 
 **Purpose**: Runs residual and model diagnostics on existing `.par` + `.tim` without refitting. Can check outliers, DM variations, JUMPs, and the residual distribution.
 
@@ -2794,7 +3208,7 @@ Semantic validation:
 
 ---
 
-### 5.25 `artifact_list`
+### 5.29 `artifact_list`
 
 **Purpose**: Lists artifacts in the current workspace, with paging by kind, time, and cursor.
 
@@ -2866,7 +3280,7 @@ Semantic validation:
 
 ---
 
-### 5.26 `job_get`
+### 5.30 `job_get`
 
 **Purpose**: Queries the status and result of an asynchronous job. Fallback used only when the client does not support the MCP Tasks extension.
 
@@ -2914,7 +3328,7 @@ Semantic validation:
 
 ---
 
-### 5.27 `job_cancel`
+### 5.31 `job_cancel`
 
 **Purpose**: Requests cancellation of an asynchronous job. Cancellation is cooperative: the server sends `SIGTERM` first, and `SIGKILL`s the process group if it is still running after the grace period.
 

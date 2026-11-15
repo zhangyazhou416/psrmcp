@@ -240,3 +240,124 @@ def test_pac_calibrate_writes_output(tmp_path):
     assert produced[0].name.endswith("P"), (
         "no FluxCal present, so pac must append 'P' (poln-only) to the output name"
     )
+
+
+def test_psrsplit_channel_naming(tmp_path):
+    """psrsplit -c splits by channels into <stem>.%04d_%04d.ar files and
+    STILL EXITS 0 when asked for more chunks than the archive holds — the
+    tools must count outputs, not trust the exit code."""
+    from psrmcp.adapters import psrchive as psa
+
+    psrsplit, vap = _which("psrsplit"), _which("vap")
+    archive = _archive()
+    if not (psrsplit and vap and archive):
+        pytest.skip("set PSRMCP_CONTRACT_ARCHIVE=<archive path> to run")
+
+    src = tmp_path / "split_src.ar"
+    shutil.copy(archive, src)
+    out = subprocess.run(psa.psrsplit_cmd(psrsplit, str(src), per_channel=32),
+                         capture_output=True, text=True, cwd=tmp_path)
+    chunks = sorted(tmp_path.glob(psa.psrsplit_output_glob("split_src")))
+    assert chunks, (
+        f"psrsplit exited {out.returncode} but wrote no split_src.[0-9]*.ar: "
+        f"stderr={out.stderr[-300:]!r}"
+    )
+    head = subprocess.run(psa.vap_cmd(vap, str(chunks[0])), capture_output=True, text=True)
+    assert head.returncode == 0
+    meta = psa.parse_vap(head.stdout)
+    assert meta.get("nchan") == 32, f"chunk should hold 32 channels: {meta}"
+
+    # over-splitting: exit 0, InvalidState note only on stderr
+    over = subprocess.run(psa.psrsplit_cmd(psrsplit, str(src), per_subint=5),
+                          capture_output=True, text=True, cwd=tmp_path)
+    assert over.returncode == 0, over.stderr[-300:]
+    assert "InvalidState" in over.stderr, over.stderr[-300:]
+
+
+def test_psrsmooth_appends_sm(tmp_path):
+    """psrsmooth appends '.sm' to the input name and is completely silent
+    on success (no stdout/stderr at all)."""
+    from psrmcp.adapters import psrchive as psa
+
+    smooth = _which("psrsmooth")
+    archive = _archive()
+    if not (smooth and archive):
+        pytest.skip("set PSRMCP_CONTRACT_ARCHIVE=<archive path> to run")
+
+    src = tmp_path / "smooth_src.ar"
+    shutil.copy(archive, src)
+    out = subprocess.run(psa.psrsmooth_cmd(smooth, str(src)),
+                         capture_output=True, text=True, cwd=tmp_path)
+    assert out.returncode == 0, out.stderr[-500:]
+    assert (tmp_path / "smooth_src.ar.sm").exists(), "psrsmooth must append .sm"
+    assert out.stdout == "" and out.stderr == "", (
+        f"psrsmooth was expected to be silent: {out.stdout[-200:]!r} {out.stderr[-200:]!r}"
+    )
+
+
+def test_psrdiff_weighted_chisq_text(tmp_path):
+    """psrdiff -W prints 'Weighted reduced chisq: <f>' on stdout and exits 0;
+    an identical archive pair yields a (near-)zero chi^2."""
+    from psrmcp.adapters import psrchive as psa
+
+    psrdiff = _which("psrdiff")
+    archive = _archive()
+    if not (psrdiff and archive):
+        pytest.skip("set PSRMCP_CONTRACT_ARCHIVE=<archive path> to run")
+
+    a = tmp_path / "cmp_ref.ar"
+    b = tmp_path / "cmp_data.ar"
+    shutil.copy(archive, a)
+    shutil.copy(archive, b)
+    out = subprocess.run(psa.psrdiff_cmd(psrdiff, str(a), str(b)),
+                         capture_output=True, text=True, cwd=tmp_path)
+    assert out.returncode == 0, out.stderr[-500:]
+    parsed = psa.parse_psrdiff(out.stdout)
+    assert not parsed["mismatch"], parsed["mismatch_reasons"]
+    assert parsed["weighted_reduced_chisq"] is not None, out.stdout[-300:]
+    assert parsed["weighted_reduced_chisq"] < 1.0, "identical archives should agree"
+
+    # not mixable: exit 0 with "files differ as follows:" + reasons
+    thin = tmp_path / "cmp_thin.ar"
+    shutil.copy(archive, thin)
+    pam = _which("pam")
+    if pam:
+        subprocess.run(psa.pam_cmd(pam, str(thin), "thin", bin_factor=8),
+                       capture_output=True, text=True, cwd=tmp_path)
+        thinned = tmp_path / "cmp_thin.thin"
+        if thinned.exists():
+            mixed = subprocess.run(
+                psa.psrdiff_cmd(psrdiff, str(thinned), str(b)),
+                capture_output=True, text=True, cwd=tmp_path)
+            assert mixed.returncode == 0, mixed.stderr[-500:]
+            parsed = psa.parse_psrdiff(mixed.stdout)
+            assert parsed["mismatch"] and parsed["mismatch_reasons"], mixed.stdout[-300:]
+
+
+def test_psrmodel_text_fit_or_stokes_envelope(tmp_path):
+    """psrmodel without plot flags is text-only. Full-Stokes archives yield a
+    chisq= block; npol<4 archives exit 0 with only 'incomplete polarization
+    information' — both envelopes are valid contracts, the parser must
+    distinguish them."""
+    from psrmcp.adapters import psrchive as psa
+
+    psrmodel = _which("psrmodel")
+    archive = _archive()
+    if not (psrmodel and archive):
+        pytest.skip("set PSRMCP_CONTRACT_ARCHIVE=<archive path> to run")
+
+    src = tmp_path / "rvm_src.ar"
+    shutil.copy(archive, src)
+    out = subprocess.run(psa.psrmodel_cmd(psrmodel, str(src)),
+                         capture_output=True, text=True, cwd=tmp_path)
+    parsed = psa.parse_psrmodel(out.stderr + "\n" + out.stdout)
+    if parsed["chisq"] is not None:
+        assert parsed["alpha_deg"] is not None, parsed
+        assert parsed["nfree"] and parsed["nfree"] > 0
+        assert parsed["reduced_chisq"] == pytest.approx(
+            parsed["chisq"] / parsed["nfree"], rel=1e-6)
+    else:
+        assert parsed["poln_incomplete"], (
+            f"no chisq and no Stokes envelope — unexpected psrmodel output: "
+            f"{out.stderr[-400:]!r}"
+        )

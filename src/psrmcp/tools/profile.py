@@ -1,7 +1,8 @@
-"""profile_standardize / profile_measure / profile_optimize (TOOLS.md 5.15-5.17)."""
+"""profile_standardize / profile_measure / profile_optimize / profile_smooth (TOOLS.md 5.17-5.20)."""
 
 from __future__ import annotations
 
+import shutil
 import time
 
 from mcp.types import ToolAnnotations
@@ -14,12 +15,14 @@ from ..models.common import ArtifactKind, WarningInfo
 from ..models.inputs import (
     ProfileMeasureInput,
     ProfileOptimizeInput,
+    ProfileSmoothInput,
     ProfileStandardizeInput,
 )
 from ..models.results import (
     MeasureMetrics,
     ProfileMeasureResult,
     ProfileOptimizeResult,
+    ProfileSmoothResult,
     ProfileStandardizeResult,
     WidthInfo,
 )
@@ -50,6 +53,14 @@ def register(reg: ToolRegistry) -> None:
         input_model=ProfileOptimizeInput,
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
         handler=_optimize,
+        long_task=True,
+    ))
+    reg.add(ToolSpec(
+        name="profile_smooth",
+        description="Denoise a profile archive with psrsmooth's adaptive filters: sinc (Fourier-domain harmonic filtering, default) or wavelet (-W; family/order via wavelet_type, cutoff in sigmas). The denoised archive is a new artifact — a natural step before timing_fit/toa_extract. Long task; supports async and cancellation.",
+        input_model=ProfileSmoothInput,
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False),
+        handler=_smooth,
         long_task=True,
     ))
 
@@ -291,3 +302,58 @@ async def _optimize(ctx: AppContext, inp: ProfileOptimizeInput, progress) -> Pro
         best_snr=parsed.get("best_snr"),
         warnings=warnings,
     )
+
+
+async def _smooth(ctx: AppContext, inp: ProfileSmoothInput, progress) -> ProfileSmoothResult:
+    started = utcnow()
+    t0 = time.monotonic()
+    psr_info = await ctx.backends.require("psrchive")
+    binary = _psrchive_tool(ctx, "psrsmooth")
+    resolved = ctx.resolver.resolve(inp.archive, root=inp.root, what="archive")
+
+    # psrsmooth APPENDS ".sm" to the input name and is completely silent on
+    # success (no stdout/stderr output at all) — run on a staged copy.
+    job_tmp = ctx.ws.new_job_tmp(f"smooth_{time.time_ns()}")
+    local_src = job_tmp / "smooth_src.ar"
+    shutil.copy2(resolved.resolved, local_src)
+
+    argv = psa.psrsmooth_cmd(
+        binary, str(local_src),
+        method=inp.method,
+        wavelet_type=inp.wavelet_type,
+        wavelet_cutoff=inp.wavelet_cutoff,
+        normalize=inp.normalize,
+    )
+    progress("smoothing", 0.3)
+    run = await ctx.runner.run(
+        argv, cwd=job_tmp, timeout_s=ctx.cfg.server.job_timeout_s, cancel=CancelHook()
+    )
+    out_path = job_tmp / "smooth_src.ar.sm"
+    if run.exit_code != 0 or not out_path.exists():
+        log_id = log_artifact_from_stderr(ctx, job_key="smooth", stderr=run.stderr_tail(), argv=argv)
+        raise PsrmcpError(
+            ErrorCode.PROCESS_FAILED,
+            f"psrsmooth produced no smoothed archive "
+            f"(exit code {run.exit_code}): {run.stderr_tail(300)}",
+            log_artifact_id=log_id,
+        )
+
+    prov = make_provenance(
+        tool="profile_smooth",
+        backend="psrsmooth",
+        backend_version=psr_info.version,
+        params=inp.model_dump(mode="json"),
+        started=started,
+        duration_s=time.monotonic() - t0,
+        command=argv,
+    )
+    smoothed = ctx.store.commit(
+        src_path=out_path,
+        filename=(inp.output_name or "smoothed") + ".ar",
+        kind=ArtifactKind.ARCHIVE,
+        format_name="PSRARCHIVE",
+        provenance=prov,
+        parents=[resolved.artifact_id] if resolved.artifact_id else None,
+    )
+    progress("complete", 1.0)
+    return ProfileSmoothResult(smoothed_archive=smoothed, method=inp.method)

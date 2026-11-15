@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/archive_compare.input.json",
+  "type": "object",
+  "required": [
+    "archive",
+    "reference"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Archive under test (its profiles are measured against the reference)"
+    },
+    "reference": {
+      "type": "string",
+      "description": "Reference archive the chi^2 is measured against (psrdiff file A)"
+    },
+    "root": {
+      "type": "string"
+    },
+    "weighted": {
+      "type": "boolean",
+      "default": true,
+      "description": "Weight by profile variances (-W); false uses the unweighted chi^2 (-X)"
+    },
+    "per_polarization": {
+      "type": "boolean",
+      "default": false,
+      "description": "Report the weighted reduced chi^2 for each polarization (-w pol)"
+    },
+    "pscrunch": {
+      "type": "boolean",
+      "default": false,
+      "description": "Sum polarizations before comparing (-p)"
+    },
+    "fscrunch": {
+      "type": "boolean",
+      "default": false,
+      "description": "Reduce to a common channel count before comparing (-f)"
+    },
+    "tscrunch": {
+      "type": "boolean",
+      "default": false,
+      "description": "Sum sub-integrations before comparing (-t)"
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}

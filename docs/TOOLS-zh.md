@@ -1387,7 +1387,191 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.12 `dedisperse`
+### 5.12 `archive_split`
+
+**用途**：用 psrsplit 把一个档案拆成多个 archive artifact：`per_subint`（-n）按每个输出文件的 sub-int 数分组，`per_channel`（-c）按频率通道数分组（至少给一个，也可同时使用；尾块余数允许，最后一个文件可以更小）。`strip_extensions`（-e）从输出中剔除定标器扩展以节省磁盘。psrsplit 在内部捕获单文件错误后仍以 0 退出，因此以产出的分块文件为成功信号；每个文件的 sub-int/通道数超过档案实际值时报 `E_INVALID_INPUT`。输出文件顺序遵循 psrsplit 的命名（先 sub-int 块序号，用 `per_channel` 时其后是块内通道序号）；每个分块都以输入档案为 provenance 父提交。
+
+**后端**：psrsplit
+**长任务**：是
+**Annotations**：`readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### 输入 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/archive_split.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Archive to split (read-only input)"
+    },
+    "root": {
+      "type": "string"
+    },
+    "per_subint": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Sub-integrations per output file (-n)"
+    },
+    "per_channel": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Frequency channels per output file (-c)"
+    },
+    "strip_extensions": {
+      "type": "boolean",
+      "default": false,
+      "description": "Strip calibrator extensions from the outputs to save disk space (-e)"
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 输出 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/archive_split.output.json",
+  "type": "object",
+  "required": ["result_type", "archives", "n_files", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "archives": {"type": "array", "items": {"$ref": "#/$defs/ArtifactRef"}},
+    "n_files": {"type": "integer", "minimum": 1},
+    "per_subint": {"type": ["integer", "null"], "minimum": 1},
+    "per_channel": {"type": ["integer", "null"], "minimum": 1},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 错误码
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+### 5.13 `archive_compare`
+
+**用途**：用 psrdiff 测量两个档案的差异：以 `reference`（psrdiff 的文件 A，固定基准）逐 bin 测量 `archive`（文件 B）的归约卡方。`weighted` 使用方差加权卡方（`-W`，默认），`weighted=false` 用未加权卡方（`-X`），`per_polarization` 逐极化输出（`-w pol`；隐含加权）。可选的预 scrunch 在比较前调和维度差异（`pscrunch` -p、`fscrunch` -f、`tscrunch` -t）。档案不 mixable 时 psrdiff 打印 "files differ as follows:" 及原因并仍以 0 退出；psrmcp 把原因作为 `E_INVALID_INPUT` 上抛（提示：使用预 scrunch 旗标）。
+
+**后端**：psrdiff
+**长任务**：否
+**Annotations**：`readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### 输入 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/archive_compare.input.json",
+  "type": "object",
+  "required": [
+    "archive",
+    "reference"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Archive under test (its profiles are measured against the reference)"
+    },
+    "reference": {
+      "type": "string",
+      "description": "Reference archive the chi^2 is measured against (psrdiff file A)"
+    },
+    "root": {
+      "type": "string"
+    },
+    "weighted": {
+      "type": "boolean",
+      "default": true,
+      "description": "Weight by profile variances (-W); false uses the unweighted chi^2 (-X)"
+    },
+    "per_polarization": {
+      "type": "boolean",
+      "default": false,
+      "description": "Report the weighted reduced chi^2 for each polarization (-w pol)"
+    },
+    "pscrunch": {
+      "type": "boolean",
+      "default": false,
+      "description": "Sum polarizations before comparing (-p)"
+    },
+    "fscrunch": {
+      "type": "boolean",
+      "default": false,
+      "description": "Reduce to a common channel count before comparing (-f)"
+    },
+    "tscrunch": {
+      "type": "boolean",
+      "default": false,
+      "description": "Sum sub-integrations before comparing (-t)"
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 输出 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/archive_compare.output.json",
+  "type": "object",
+  "required": ["result_type", "weighted", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "reduced_chisq": {"type": ["number", "null"]},
+    "weighted": {"type": "boolean"},
+    "per_polarization": {"type": "object", "additionalProperties": {"type": "number"}},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 错误码
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+### 5.14 `dedisperse`
 
 **用途**：使用 dspsr 对数据进行相干或非相干消色散并折叠。相干消色散需要匹配的 ephemeris。
 
@@ -1508,7 +1692,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.13 `rfi_scan`
+### 5.15 `rfi_scan`
 
 **用途**：分析 archive 的通道统计，给出建议的坏通道掩膜。只读，不修改数据。
 
@@ -1587,7 +1771,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.14 `rfi_zap`
+### 5.16 `rfi_zap`
 
 **用途**：对 archive 应用通道掩膜，生成新的 archive。支持显式通道列表或自动方法。
 
@@ -1690,7 +1874,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.15 `profile_standardize`
+### 5.17 `profile_standardize`
 
 **用途**：从 archive 生成标准轮廓，供 TOA 提取使用。
 
@@ -1753,7 +1937,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.16 `profile_measure`
+### 5.18 `profile_measure`
 
 **用途**：测量 archive 的轮廓指标，例如 S/N、FWHM、流量和偏振参数。只读。
 
@@ -1842,7 +2026,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.17 `profile_optimize`
+### 5.19 `profile_optimize`
 
 **用途**：以轮廓 S/N 最大为目标搜索周期与 DM（pdmp）。以改正量形式报告最优周期（ms）与 DM 及其不确定度；输入 archive 永不被修改。
 
@@ -1910,7 +2094,102 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.18 `single_pulse_analyze`
+### 5.20 `profile_smooth`
+
+**用途**：用 psrsmooth 的自适应滤波器为剖面档案去噪：`sinc`（默认；傅里叶域，保留最强谐波，同一滤波器应用到所有极化）或 `wavelet`（`-W`；`wavelet_type` 选族+阶数，如 UD8/D4/B103，`wavelet_cutoff` 保留高于 cutoff*sqrt(2*ln(nbin)) sigma 的分量）。`normalize` 把 pol 0 归一到单位平方和（其他极化按同一因子缩放）。去噪后的档案作为新 artifact 提交，以输入为 provenance 父——是 `toa_extract`/`timing_fit` 之前自然的一步。psrsmooth 成功时完全静默（stdout/stderr 均无输出），因此以 `.sm` 输出文件为成功信号。
+
+**后端**：psrsmooth
+**长任务**：是
+**Annotations**：`readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### 输入 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/profile_smooth.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Archive to denoise (read-only input)"
+    },
+    "root": {
+      "type": "string"
+    },
+    "method": {
+      "enum": [
+        "sinc",
+        "wavelet"
+      ],
+      "default": "sinc",
+      "description": "Adaptive filter: sinc (Fourier-domain harmonic keeping) or wavelet (-W)"
+    },
+    "wavelet_type": {
+      "type": "string",
+      "pattern": "^[HDBU][A-Z0-9]{1,5}$",
+      "default": "UD8",
+      "description": "Wavelet family+order code (H/D/B families, U prefix = undecimated); only used with method=wavelet"
+    },
+    "wavelet_cutoff": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "default": 1.3,
+      "description": "Keep wavelet components above cutoff*sqrt(2*ln(nbin)) sigma; only used with method=wavelet"
+    },
+    "normalize": {
+      "type": "boolean",
+      "default": false,
+      "description": "Normalize pol 0 to unit sum-of-squares (other polarizations scaled by the same factor) (-n)"
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 输出 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/profile_smooth.output.json",
+  "type": "object",
+  "required": ["result_type", "smoothed_archive", "method", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "smoothed_archive": {"$ref": "#/$defs/ArtifactRef"},
+    "method": {"enum": ["sinc", "wavelet"]},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 错误码
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+### 5.21 `single_pulse_analyze`
 
 **用途**：单脉冲分析（psrspa）。至少选择一种分析模式，模式分为互斥两组：(a) 相位分辨直方图（流量/偏振度/偏振角/线偏振/圆偏振）、相位区间最大振幅、线偏振-偏振角散点数据；(b) 逐脉冲检测（`find_pulses`，巨型脉冲搜索，算法来自白名单）——psrspa 的 `-a` 会提前返回并静默跳过 (a) 组，因此工具在入口直接拒绝该组合。相位分辨直方图是**每个相位 bin 一个文件**（如 nbin=1024 上取 0.3-0.7 区间会产出 411 个文件），工具把它们打包成单个文本 artifact（用 `# >>> <文件名>` 分节）。最大振幅条目携带的是相位 bin 索引（不是 turns），已对装机版本验证。直方图模式需要带 GSL 支持的 psrspa 构建。
 
@@ -2077,7 +2356,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.19 `rotation_measure_fit`
+### 5.22 `rotation_measure_fit`
 
 **用途**：对已校准、已 tscrunch、已消色散的 archive 拟合旋转测量（rmfit）。方法（至少一种）：暴力搜索试验 RM（`brute_force` 自动边界，或 `rm_range` 给出显式 `min,max,steps` 边界——两者互斥）、双半频带迭代精化（`refine`）、或 Noutsos+2008 二次拟合（`quadratic_window` / `quadratic_per_bin`，相位窗口单位为 turns）。`save_rm_archive=true` 时额外写出一个带每子积分辅助 RM 的新 archive artifact。rmfit 的文本输出做防御性解析；无法解析的 RM 值通过 `W_RMFIT_UNPARSED` 报告。
 
@@ -2205,7 +2484,138 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.20 `polarization_calibrate`
+### 5.23 `rvm_fit`
+
+**用途**：用 psrmodel 对偏振档案的位置角摆动拟合旋转矢量模型（RVM）。档案在内部被 tscrunch/fscrunch、转为 Stokes，并用头部 RM 把位置角改正到无穷频率；拟合返回 `alpha`（磁轴余纬）、`beta`（`use_beta=true`）或 `zeta`（视线余纬）、`psi0`/`phi0` 以及拟合卡方（`chisq`、`nfree`、`reduced_chisq`），单位均为度。相位范围（`include`/`exclude`/`opm`，每个为 "deg0:deg1" 脉冲经度度数）选择约束 bin 并标记正交模范围；`ortho` 切换到正交参数化；`mlgain` 使用极大似然增益；`residuals` 把拟合后的 PA（`psi`）或 Q/U（`stokes`）残差表存为文本 artifact。需要可恢复的 Stokes Q/U：不满足时（npol<4、未定标）psrmodel 以 0 退出且 stderr 只有 InvalidState 注记，psrmcp 将其映射为 `E_INVALID_INPUT`（"incomplete polarization information"）；其余情况以 `chisq=` 行而非退出码判定成功。
+
+**后端**：psrmodel
+**长任务**：否
+**Annotations**：`readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### 输入 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/rvm_fit.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Polarimetric archive with recoverable Stokes Q/U (npol>=4 or calibrated)"
+    },
+    "root": {
+      "type": "string"
+    },
+    "threshold_sigma": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Cutoff threshold when selecting PA bins (-t)"
+    },
+    "guess_smooth_bins": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Smoothing window (phase bins) used to stabilize the first guess (-smooth)"
+    },
+    "include": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "description": "Pulse-longitude degree ranges to include in the fit, 'deg0:deg1' each (--include)"
+    },
+    "exclude": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "description": "Pulse-longitude degree ranges to exclude from the fit, 'deg0:deg1' each (--exclude)"
+    },
+    "opm": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "description": "Pulse-longitude degree ranges dominated by an orthogonal polarization mode, 'deg0:deg1' each (-o)"
+    },
+    "ortho": {
+      "type": "boolean",
+      "default": false,
+      "description": "Use the orthometric RVM parameterization (--ortho)"
+    },
+    "ml_gain": {
+      "type": "boolean",
+      "default": false,
+      "description": "Use maximum-likelihood gains (--mlgain)"
+    },
+    "use_beta": {
+      "type": "boolean",
+      "default": false,
+      "description": "Vary the impact angle beta instead of the line-of-sight colatitude zeta (--use_beta)"
+    },
+    "residuals": {
+      "enum": [
+        "none",
+        "psi",
+        "stokes"
+      ],
+      "default": "none",
+      "description": "Save post-fit residuals as a text artifact: psi (position angle) or stokes (Q/U)"
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 输出 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/rvm_fit.output.json",
+  "type": "object",
+  "required": ["result_type", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "psi0_deg": {"type": ["number", "null"]},
+    "phi0_deg": {"type": ["number", "null"]},
+    "alpha_deg": {"type": ["number", "null"]},
+    "beta_deg": {"type": ["number", "null"]},
+    "zeta_deg": {"type": ["number", "null"]},
+    "chisq": {"type": ["number", "null"]},
+    "nfree": {"type": ["integer", "null"]},
+    "reduced_chisq": {"type": ["number", "null"]},
+    "residuals_artifact": {"oneOf": [{"$ref": "#/$defs/ArtifactRef"}, {"type": "null"}]},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 错误码
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+### 5.24 `polarization_calibrate`
 
 **用途**：用 pac 对脉冲星 archive 做偏振（可选流量）定标。定标源二选一：`calibrators`（PolnCal / FluxCal-On / FluxCal-Off 扫描；每次调用在内存中重建定标器数据库，单次调用自包含）或 `model`（直接应用 pcm/pacv 的模型解）。模型：`singleaxis`（默认）、`polar`(`-s`)、`reception`(`-S`)。`*_match` 标志只能放宽 pac 的匹配判据（每个标志关闭一条判据）；`match_sequence` 限定只用脉冲星观测之前/之后的定标器。pac 内部会捕获单文件错误并仍以 0 退出，因此以校准输出文件是否产出判定成败；当偏振定标成功而流量定标失败时，pac 在输出名末尾追加 `P`，并报告 `W_PAC_POLN_ONLY` / `W_PAC_FLUXCAL_FAILED`（`flux_calibration=false` 时 `P` 后缀属预期，不告警）。模型解没有定标器数据库可用，流量定标被跳过并给出 `W_PAC_NO_FLUXDB`。
 
@@ -2353,7 +2763,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.21 `calibrator_database`
+### 5.25 `calibrator_database`
 
 **用途**：从定标器扫描 archive 构建 pac 定标器数据库摘要（`database.txt` artifact）。条目按头部元数据（时间、位置、频率、接收机）索引，供 pac 与脉冲星观测匹配；全部条目解析后内联返回（`entries` 的 `obs_type` 来自 archive 头部，如 PolnCal / FluxCal-On / FluxCal-Off，各类型计数在 `entry_types`）。pac 按扩展名识别定标器文件，因此列出的每个文件都必须有扩展名（否则 `E_INVALID_INPUT`）；所给扩展名会通过 `-u` 追加到 pac 默认扫描集（cf/pcal/fcal/pfit）之后。"找不到定标器"以非零码退出，表现为 `E_PROCESS_FAILED`。
 
@@ -2430,7 +2840,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.22 `toa_extract`
+### 5.26 `toa_extract`
 
 **用途**：使用标准轮廓从 archive 提取 TOA，生成 TEMPO `.tim` 文件。
 
@@ -2538,7 +2948,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.23 `timing_fit`
+### 5.27 `timing_fit`
 
 **用途**：使用 PINT 或 tempo2 对 `.par` + `.tim` 做计时拟合，返回更新后的 `.par`、拟合统计、残差和残差图。
 
@@ -2675,7 +3085,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.24 `timing_diagnose`
+### 5.28 `timing_diagnose`
 
 **用途**：对已有 `.par` + `.tim` 做残差和模型诊断，不重新拟合。可检查离群点、DM 变化、JUMP 和残差分布。
 
@@ -2794,7 +3204,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.25 `artifact_list`
+### 5.29 `artifact_list`
 
 **用途**：列出当前工作区的 artifact，支持按类型、时间和游标分页。
 
@@ -2866,7 +3276,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.26 `job_get`
+### 5.30 `job_get`
 
 **用途**：查询异步任务状态和结果。仅在客户端不支持 MCP Tasks 扩展时作为兜底使用。
 
@@ -2914,7 +3324,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.27 `job_cancel`
+### 5.31 `job_cancel`
 
 **用途**：请求取消异步任务。取消是协作式的：服务器先发送 `SIGTERM`，宽限期后如仍运行则 `SIGKILL` 进程组。
 
