@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/pipeline_reduce.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Raw observation (PSRFITS/filterbank folded by dspsr) or an already-folded archive"
+    },
+    "root": {
+      "type": "string"
+    },
+    "pulsar_name": {
+      "type": "string",
+      "description": "Pulsar name (e.g. J0332+5454): the ephemeris is auto-exported from the catalogue for folding"
+    },
+    "ephemeris": {
+      "type": "string",
+      "description": "Par file / par artifact ID to fold with (alternative to pulsar_name)"
+    },
+    "dm": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Direct DM override for folding (alternative to pulsar_name/ephemeris)"
+    },
+    "fold": {
+      "type": "boolean",
+      "default": true,
+      "description": "Run the dspsr folding step (false when the input is already a folded archive)"
+    },
+    "rfi_strategy": {
+      "enum": [
+        "none",
+        "scan",
+        "zap"
+      ],
+      "default": "zap",
+      "description": "RFI handling: report only (scan), auto-zap the suspicious channels (zap), or skip (none)"
+    },
+    "rfi_method": {
+      "enum": [
+        "psrchive_median",
+        "spectral_kurtosis",
+        "bandpass"
+      ],
+      "default": "psrchive_median"
+    },
+    "rfi_threshold_sigma": {
+      "type": "number",
+      "minimum": 0.5,
+      "maximum": 20,
+      "default": 3.0
+    },
+    "build_standard": {
+      "type": "boolean",
+      "default": true,
+      "description": "Build a standard-profile artifact from the reduced archive"
+    },
+    "measure": {
+      "type": "boolean",
+      "default": true,
+      "description": "Measure profile metrics (S/N, width) on the reduced archive"
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}

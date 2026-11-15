@@ -1,7 +1,8 @@
-"""Output models for all 31 tools (TOOLS.md section 5 output schemas)."""
+"""Output models for all 33 tools (TOOLS.md section 5 output schemas)."""
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -806,6 +807,73 @@ class ArtifactListResult(ToolResult):
         lines = [f"{self.count} artifacts"]
         for a in self.artifacts[:15]:
             lines.append(f"- `{a.artifact_id}` {a.kind.value} {a.format} ({a.size_bytes} bytes)")
+        return "\n".join(lines)
+
+
+class ArtifactDeleteResult(ToolResult):
+    """Deletion confirmation: the artifact was moved to the workspace trash
+    area (kept for 7 days) and dropped from the session index."""
+    model_config = FORBID
+    artifact_id: str
+    kind: str
+    size_bytes: int = Field(ge=0)
+    trashed: bool = True
+    warnings: list[WarningInfo] = Field(default_factory=list)
+
+    def summarize(self) -> str:
+        kb = self.size_bytes / 1024
+        size = f"{kb:.1f} KiB" if kb < 1024 else f"{kb / 1024:.1f} MiB"
+        return f"Deleted `{self.artifact_id}` ({self.kind}, {size}) -> trash (kept 7 days)"
+
+
+class PipelineStepStatus(str, Enum):
+    OK = "ok"
+    SKIPPED = "skipped"
+    FAILED = "failed"
+
+
+class PipelineStepReport(BaseModel):
+    """One step of the pipeline_reduce chain, with the artifact it produced
+    (when it completed) and the reason for a skip/failure."""
+    model_config = FORBID
+    step: str
+    status: PipelineStepStatus
+    artifact_id: str | None = None
+    detail: str | None = None
+    duration_s: float = Field(default=0.0, ge=0)
+
+
+class PipelineReduceResult(ToolResult):
+    """Composite reduction: the artifact chain plus per-step statuses.
+    `succeeded=false` means a step failed and the chain stopped early — the
+    completed steps remain usable and the same inputs can be retried."""
+    model_config = FORBID
+    succeeded: bool
+    final_archive: ArtifactRef | None = None
+    standard_profile: ArtifactRef | None = None
+    rfi_report_artifact: str | None = None
+    measure_metrics: MeasureMetrics | None = None
+    measure_plot_artifact: str | None = None
+    steps: list[PipelineStepReport] = Field(default_factory=list)
+    warnings: list[WarningInfo] = Field(default_factory=list)
+
+    def summarize(self) -> str:
+        lines = [
+            "Reduction pipeline: " + ("complete" if self.succeeded else "STOPPED at a failed step")
+        ]
+        for s in self.steps:
+            mark = {"ok": "✓", "skipped": "-", "failed": "✗"}[s.status.value]
+            line = f"- {mark} {s.step}"
+            if s.artifact_id:
+                line += f" -> `{s.artifact_id}`"
+            if s.detail:
+                line += f" ({s.detail})"
+            lines.append(line)
+        m = self.measure_metrics
+        if m is not None and m.snr is not None:
+            lines.append(f"- final S/N = {m.snr:.1f}")
+        for w in self.warnings:
+            lines.append(f"- ⚠ {w.message}")
         return "\n".join(lines)
 
 

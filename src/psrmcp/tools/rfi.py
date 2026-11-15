@@ -51,19 +51,67 @@ def _channels_to_ranges(channels: list[int]) -> str:
     return ",".join(parts)
 
 
-def _flag_stats(ctx: AppContext, path, threshold_sigma: float, nchan_hint: int) -> tuple[list[int], dict]:
+async def _flag_stats(ctx: AppContext, path, threshold_sigma: float, nchan_hint: int) -> tuple[list[int], dict]:
     """Per-channel statistics via psrstat; returns (bad_channels, statistics).
 
-    TODO(contract): psrchive per-channel weight/statistics output syntax needs
-    verification on the installed version. Raises E_PROCESS_FAILED with an
-    explicit hint when the installed psrstat cannot provide the data.
+    Contract verified on the installed stack (2026-11-15): only the `snr`
+    expression resolves in psrstat's `chan` loop context, so flagging runs
+    on the per-channel S/N of the first sub-integration — RFI channels show
+    up as strong outliers of the band's S/N distribution. Flagging is
+    MAD-based: |snr - median| > threshold_sigma * 1.4826*MAD (None/zero snr
+    counts as bad). The `bandpass` method has no psrstat expression in this
+    build and is refused with an explicit hint.
     """
-    raise PsrmcpError(
-        ErrorCode.PROCESS_FAILED,
-        "rfi_scan per-channel statistics rely on psrstat per-channel output, unavailable until contract tests are backfilled",
-        hint="install the software stack and run the contract tests first, or use rfi_zap with an explicit channel list",
-        retryable=False,
-    )
+    binary = _psrchive_tool(ctx, "psrstat")
+    argv = psa.psrstat_channels_cmd(binary, str(path), nchan_hint)
+    run = await ctx.runner.run(argv, timeout_s=300.0)
+    if run.exit_code != 0:
+        raise PsrmcpError(
+            ErrorCode.PROCESS_FAILED,
+            f"psrstat per-channel scan failed (exit code {run.exit_code}): "
+            f"{run.stderr_tail(300)}",
+        )
+    snrs = psa.parse_psrstat_channels(run.stdout_text)
+    if len(snrs) < max(nchan_hint // 2, 1):
+        raise PsrmcpError(
+            ErrorCode.PROCESS_FAILED,
+            f"psrstat returned only {len(snrs)} of {nchan_hint} channels: "
+            f"{run.stdout_text[-200:]!r}",
+        )
+
+    valid = [v for v in snrs if v is not None]
+    if not valid:
+        return list(range(nchan_hint)), {"method": "snr_mad", "median_snr": None,
+                                         "sigma_snr": None, "n_channels": nchan_hint}
+
+    med = _median(valid)
+    mad = _median([abs(v - med) for v in valid])
+    sigma = 1.4826 * mad
+    bad: list[int] = []
+    for i, v in enumerate(snrs):
+        if v is None or v == 0.0:
+            bad.append(i)  # missing / dead channel
+        elif sigma > 0:
+            if abs(v - med) > threshold_sigma * sigma:
+                bad.append(i)
+        elif v != med:
+            bad.append(i)  # zero-variance band: any deviation is an outlier
+    stats = {
+        "method": "snr_mad",
+        "median_snr": round(med, 6),
+        "sigma_snr": round(sigma, 6),
+        "n_channels": nchan_hint,
+        "note": "per-channel S/N of the first sub-integration (psrstat chan loop)",
+    }
+    return bad, stats
+
+
+def _median(values: list[float]) -> float:
+    s = sorted(values)
+    n = len(s)
+    if n % 2:
+        return s[n // 2]
+    return (s[n // 2 - 1] + s[n // 2]) / 2.0
 
 
 async def _scan(ctx: AppContext, inp: RfiScanInput, progress) -> RfiScanResult:  # noqa: ANN001
@@ -74,6 +122,12 @@ async def _scan(ctx: AppContext, inp: RfiScanInput, progress) -> RfiScanResult: 
 
     if inp.method == "spectral_kurtosis":
         raise env_missing("clfd", "the spectral_kurtosis method depends on clfd, which is not installed")
+    if inp.method == "bandpass":
+        raise PsrmcpError(
+            ErrorCode.PROCESS_FAILED,
+            "the bandpass method has no psrstat bandpass expression in this PSRCHIVE build",
+            hint="use method=psrchive_median (per-channel S/N outlier flagging)",
+        )
 
     vap_binary = _psrchive_tool(ctx, "vap")
     vap = await ctx.runner.run(psa.vap_cmd(vap_binary, str(resolved.resolved)), timeout_s=120.0)
@@ -83,7 +137,7 @@ async def _scan(ctx: AppContext, inp: RfiScanInput, progress) -> RfiScanResult: 
         raise format_unsupported(f"cannot determine the channel count: {resolved.resolved.name}")
 
     progress("measuring", 0.3)
-    bad, stats = _flag_stats(ctx, resolved.resolved, inp.threshold_sigma, nchan)
+    bad, stats = await _flag_stats(ctx, resolved.resolved, inp.threshold_sigma, nchan)
 
     plot_artifact = None
     warnings: list[WarningInfo] = []
@@ -123,7 +177,7 @@ async def _zap(ctx: AppContext, inp: RfiZapInput, progress) -> RfiZapResult:  # 
         vap = await ctx.runner.run(psa.vap_cmd(vap_binary, str(resolved.resolved)), timeout_s=120.0)
         meta = psa.parse_vap(vap.stdout_text)
         nchan = int(meta.get("nchan") or 0)
-        bad, _stats = _flag_stats(ctx, resolved.resolved, inp.mask.auto.threshold_sigma, nchan)
+        bad, _stats = await _flag_stats(ctx, resolved.resolved, inp.mask.auto.threshold_sigma, nchan)
         channels = bad
     else:
         channels = list(inp.mask.channels or [])

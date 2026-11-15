@@ -429,7 +429,9 @@ The following `$defs` are referenced by all tool schemas. Implementations may ge
 | `toa_extract` | false | false | true | false | yes |
 | `timing_fit` | false | false | true | false | yes |
 | `timing_diagnose` | true | false | true | false | no |
+| `pipeline_reduce` | false | false | true | false | yes |
 | `artifact_list` | true | false | true | false | no |
+| `artifact_delete` | false | true | false | false | no |
 | `job_get` | true | false | true | false | no |
 | `job_cancel` | false | false | false | false | no |
 
@@ -1590,7 +1592,7 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://psrmcp.local/schemas/dedisperse.input.json",
   "type": "object",
-  "required": ["input", "ephemeris"],
+  "required": ["input"],
   "properties": {
     "input": {
       "type": "string",
@@ -1599,7 +1601,7 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
     "root": {"type": "string"},
     "ephemeris": {
       "type": "string",
-      "description": "An artifact ID, a .par path under a read root, or a pulsar name"
+      "description": "An artifact ID, a .par path under a read root, or a pulsar name (auto-exported); required unless dm_override is given"
     },
     "mode": {
       "enum": ["coherent", "incoherent"],
@@ -1698,7 +1700,7 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ### 5.15 `rfi_scan`
 
-**Purpose**: Analyses per-channel statistics of an archive and produces a suggested bad-channel mask. Read-only; does not modify data.
+**Purpose**: Analyses per-channel statistics of an archive and produces a suggested bad-channel mask. Read-only; does not modify data. `psrchive_median` (default) measures the per-channel S/N of the first sub-integration via psrstat's chan loop (`-Q -l 'chan=0-<n-1>' -c snr`, verified on the installed stack — only `snr` resolves in the chan context) and flags outliers with robust MAD statistics: |snr - median| > `threshold_sigma` * 1.4826*MAD, plus missing/zero-S/N channels; a zero-variance band flags any deviation. `spectral_kurtosis` requires clfd (not installed: `E_ENV_MISSING`); `bandpass` has no psrstat expression in this build (`E_PROCESS_FAILED` with a hint). `statistics` returns the method, band median and derived sigma.
 
 **Backend**: psrchive / clfd  
 **Long-running**: no  
@@ -3381,39 +3383,217 @@ Semantic validation:
 
 ---
 
+### 5.32 `artifact_delete`
+
+**Purpose**: Delete a workspace artifact: the file moves to the workspace trash area (`trash/` under the workspace root, kept for 7 days and purged afterwards) and the artifact disappears from `artifact_list` and the session index. `confirm=true` is mandatory — this is the only destructive tool in the suite; without it the call is refused with `E_INVALID_INPUT`. Parent protection: an artifact that other artifacts reference as a provenance parent is refused with `E_OUTPUT_CONFLICT` until the descendants are deleted first. Deleting the same id twice returns `E_NOT_FOUND` (`idempotentHint=false`). The manifest records the deletion (append-only log).
+
+**Backend**: psrmcp (workspace store)
+**Long-running**: no
+**Annotations**: `readOnlyHint=false`, `destructiveHint=true`, `idempotentHint=false`, `openWorldHint=false`
+
+#### Input Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/artifact_delete.input.json",
+  "type": "object",
+  "required": [
+    "artifact_id"
+  ],
+  "properties": {
+    "artifact_id": {
+      "type": "string",
+      "pattern": "^art_[A-Za-z0-9_-]{8,64}$",
+      "description": "Artifact to delete (moved to the workspace trash area, kept 7 days)"
+    },
+    "confirm": {
+      "type": "boolean",
+      "default": false,
+      "description": "Must be true to execute the deletion"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Output Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/artifact_delete.output.json",
+  "type": "object",
+  "required": ["result_type", "artifact_id", "kind", "size_bytes", "trashed", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "artifact_id": {"type": "string"},
+    "kind": {"type": "string"},
+    "size_bytes": {"type": "integer", "minimum": 0},
+    "trashed": {"const": true},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Error Codes
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_OUTPUT_CONFLICT`
+
+---
+
+
+### 5.33 `pipeline_reduce`
+
+**Purpose**: One-call reduction chain composing existing tools: `inspect` (archive_inspect) -> `fold` (dedisperse/dspsr; DM from `pulsar_name` with catalogue auto-export, `ephemeris` par file/artifact, or explicit `dm`; skipped entirely when `fold=false` for already-folded input) -> `rfi_scan` (+ `rfi_zap` with an auto mask when `rfi_strategy=zap`; `scan` reports without zapping; `none` skips both) -> `standard` (profile_standardize, when `build_standard=true`) -> `measure` (profile_measure, when `measure=true`). Composite-tool rule: every step reports its own `status` (`ok`/`skipped`/`failed`) and artifact in `steps`; a failed step stops the chain, later steps are reported as skipped, `succeeded=false` and a `W_PIPELINE_STEP_FAILED` warning carries the cause — completed artifacts remain usable and the same inputs can simply be retried. `final_archive` is the last archive artifact of the chain (folded -> zapped); `standard_profile` and the measurement metrics/plot ride along.
+
+**Backend**: composite (archive_inspect / dspsr / paz / pam / psrstat)
+**Long-running**: yes
+**Annotations**: `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### Input Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/pipeline_reduce.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Raw observation (PSRFITS/filterbank folded by dspsr) or an already-folded archive"
+    },
+    "root": {
+      "type": "string"
+    },
+    "pulsar_name": {
+      "type": "string",
+      "description": "Pulsar name (e.g. J0332+5454): the ephemeris is auto-exported from the catalogue for folding"
+    },
+    "ephemeris": {
+      "type": "string",
+      "description": "Par file / par artifact ID to fold with (alternative to pulsar_name)"
+    },
+    "dm": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Direct DM override for folding (alternative to pulsar_name/ephemeris)"
+    },
+    "fold": {
+      "type": "boolean",
+      "default": true,
+      "description": "Run the dspsr folding step (false when the input is already a folded archive)"
+    },
+    "rfi_strategy": {
+      "enum": [
+        "none",
+        "scan",
+        "zap"
+      ],
+      "default": "zap",
+      "description": "RFI handling: report only (scan), auto-zap the suspicious channels (zap), or skip (none)"
+    },
+    "rfi_method": {
+      "enum": [
+        "psrchive_median",
+        "spectral_kurtosis",
+        "bandpass"
+      ],
+      "default": "psrchive_median"
+    },
+    "rfi_threshold_sigma": {
+      "type": "number",
+      "minimum": 0.5,
+      "maximum": 20,
+      "default": 3.0
+    },
+    "build_standard": {
+      "type": "boolean",
+      "default": true,
+      "description": "Build a standard-profile artifact from the reduced archive"
+    },
+    "measure": {
+      "type": "boolean",
+      "default": true,
+      "description": "Measure profile metrics (S/N, width) on the reduced archive"
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Output Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/pipeline_reduce.output.json",
+  "type": "object",
+  "required": ["result_type", "succeeded", "steps", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "succeeded": {"type": "boolean"},
+    "final_archive": {"oneOf": [{"$ref": "#/$defs/ArtifactRef"}, {"type": "null"}]},
+    "standard_profile": {"oneOf": [{"$ref": "#/$defs/ArtifactRef"}, {"type": "null"}]},
+    "rfi_report_artifact": {"type": ["string", "null"]},
+    "measure_metrics": {"oneOf": [{"$ref": "#/$defs/MeasureMetrics"}, {"type": "null"}]},
+    "measure_plot_artifact": {"type": ["string", "null"]},
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["step", "status", "duration_s"],
+        "properties": {
+          "step": {"enum": ["inspect", "fold", "rfi_scan", "rfi_zap", "standard", "measure"]},
+          "status": {"enum": ["ok", "skipped", "failed"]},
+          "artifact_id": {"type": ["string", "null"]},
+          "detail": {"type": ["string", "null"]},
+          "duration_s": {"type": "number", "minimum": 0}
+        },
+        "additionalProperties": false
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Error Codes
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`, `E_TIMEOUT`
+
+---
+
 ## 6. Future Tools
 
 The following tools are out of MVP scope but reserve the interface direction.
 
-### 6.1 `artifact_delete`
-
-- **Purpose**: delete a workspace artifact
-- **Annotations**: `readOnlyHint=false`, `destructiveHint=true`, `idempotentHint=false`
-- **Input**: `artifact_id`, `confirm: true`
-- **Behaviour**: by default moves the artifact to a trash area with a TTL; executes only when `confirm=true`
-- **Error codes**: `E_NOT_FOUND`, `E_INVALID_INPUT`, `E_QUOTA_EXCEEDED`
-
-### 6.2 `pipeline_reduce`
-
-- **Purpose**: inspect → dedisperse → RFI → standard profile → measure in a single call
-- **Input**: `archive`, `pulsar_name?`, `dm?`, `rfi_strategy?`
-- **Output**: the full artifact chain and a summary of each step
-- **Note**: composite tools must return intermediate artifacts and keep completed steps on failure, so retries can resume
-
-### 6.3 `compare_timing_models`
+### 6.1 `compare_timing_models`
 
 - **Purpose**: fit the same par/tim with PINT and with tempo2, then compare parameters and residuals
 - **Input**: `par`, `tim`, `fit_params?`
 - **Output**: both fit results, parameter differences, residual differences, and warnings
 
-### 6.4 `polarization_calibrate`
-
-- **Purpose**: polarization calibration based on pac
-- **Input**: `archive`, `calibrator_archive`, `cal_database?`
-- **Output**: the calibrated archive, calibration parameters, and diagnostic plots
-- **Note**: strongly dependent on the observing system and the calibrator source; needs a separate design
-
-### 6.5 `search_mode_process`
+### 6.2 `search_mode_process`
 
 - **Purpose**: search-mode data processing (PRESTO / SIGPROC / heimdall)
 - **Input**: `filterbank`, `dm_range`, `algorithm`

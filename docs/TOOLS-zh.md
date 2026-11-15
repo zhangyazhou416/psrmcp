@@ -425,7 +425,9 @@ MCP `tools/call` 返回：
 | `toa_extract` | false | false | true | false | 是 |
 | `timing_fit` | false | false | true | false | 是 |
 | `timing_diagnose` | true | false | true | false | 否 |
+| `pipeline_reduce` | false | false | true | false | 是 |
 | `artifact_list` | true | false | true | false | 否 |
+| `artifact_delete` | false | true | false | false | 否 |
 | `job_get` | true | false | true | false | 否 |
 | `job_cancel` | false | false | false | false | 否 |
 
@@ -1586,7 +1588,7 @@ MCP `tools/call` 返回：
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://psrmcp.local/schemas/dedisperse.input.json",
   "type": "object",
-  "required": ["input", "ephemeris"],
+  "required": ["input"],
   "properties": {
     "input": {
       "type": "string",
@@ -1694,7 +1696,7 @@ MCP `tools/call` 返回：
 
 ### 5.15 `rfi_scan`
 
-**用途**：分析 archive 的通道统计，给出建议的坏通道掩膜。只读，不修改数据。
+**用途**：分析 archive 的通道统计，给出建议的坏通道掩膜。只读，不修改数据。`psrchive_median`（默认）通过 psrstat 的 chan 循环（`-Q -l 'chan=0-<n-1>' -c snr`，已在装机栈上验证——chan 上下文只有 `snr` 可解析）测量第一个 sub-int 的逐通道 S/N，用鲁棒 MAD 统计旗标离群通道：|snr - 中位数| > `threshold_sigma` * 1.4826*MAD，外加缺失/零 S/N 通道；零方差频带对任何偏离旗标。`spectral_kurtosis` 依赖 clfd（未安装：`E_ENV_MISSING`）；`bandpass` 在此 PSRCHIVE 构建中没有对应表达式（`E_PROCESS_FAILED` 附提示）。`statistics` 返回方法、频带中位数与推导 sigma。
 
 **后端**：psrchive / clfd  
 **长任务**：否  
@@ -3377,39 +3379,217 @@ MCP `tools/call` 返回：
 
 ---
 
+### 5.32 `artifact_delete`
+
+**用途**：删除工作区 artifact：文件移动到工作区的回收站（根目录 `trash/`，保留 7 天后清除），并从会话索引中移除（`artifact_list` 不再显示）。必须 `confirm=true` —— 这是全套工具中唯一的破坏性工具；否则以 `E_INVALID_INPUT` 拒绝。父级保护：仍被其他 artifact 作为 provenance 父引用的 artifact 会以 `E_OUTPUT_CONFLICT` 拒绝，直到先删除其后代。同一 id 重复删除返回 `E_NOT_FOUND`（`idempotentHint=false`）。manifest 记录删除（append-only 日志）。
+
+**后端**：psrmcp（workspace 存储）
+**长任务**：否
+**Annotations**：`readOnlyHint=false`, `destructiveHint=true`, `idempotentHint=false`, `openWorldHint=false`
+
+#### 输入 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/artifact_delete.input.json",
+  "type": "object",
+  "required": [
+    "artifact_id"
+  ],
+  "properties": {
+    "artifact_id": {
+      "type": "string",
+      "pattern": "^art_[A-Za-z0-9_-]{8,64}$",
+      "description": "Artifact to delete (moved to the workspace trash area, kept 7 days)"
+    },
+    "confirm": {
+      "type": "boolean",
+      "default": false,
+      "description": "Must be true to execute the deletion"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 输出 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/artifact_delete.output.json",
+  "type": "object",
+  "required": ["result_type", "artifact_id", "kind", "size_bytes", "trashed", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "artifact_id": {"type": "string"},
+    "kind": {"type": "string"},
+    "size_bytes": {"type": "integer", "minimum": 0},
+    "trashed": {"const": true},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 错误码
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_OUTPUT_CONFLICT`
+
+---
+
+
+### 5.33 `pipeline_reduce`
+
+**用途**：一次调用完成归约链，组合现有工具：`inspect`（archive_inspect）-> `fold`（dedisperse/dspsr；DM 来自 `pulsar_name`（自动从目录导出 ephemeris）、`ephemeris`（par 文件/artifact）或显式 `dm`；`fold=false` 时跳过，用于已折叠输入）-> `rfi_scan`（`rfi_strategy=zap` 时追加 `rfi_zap` 自动掩码；`scan` 只报告不消除；`none` 全部跳过）-> `standard`（profile_standardize，`build_standard=true` 时）-> `measure`（profile_measure，`measure=true` 时）。组合工具规则：每一步在 `steps` 里报告自身 `status`（`ok`/`skipped`/`failed`）与 artifact；某步失败即停止链条，后续步骤报 skipped，`succeeded=false` 并以 `W_PIPELINE_STEP_FAILED` 警告携带原因——已完成的 artifact 仍然可用，直接重试相同输入即可。`final_archive` 是链上最后一个 archive artifact（折叠 -> 消噪后）；`standard_profile` 与测量指标/图一并返回。
+
+**后端**：组合（archive_inspect / dspsr / paz / pam / psrstat）
+**长任务**：是
+**Annotations**：`readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### 输入 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/pipeline_reduce.input.json",
+  "type": "object",
+  "required": [
+    "archive"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Raw observation (PSRFITS/filterbank folded by dspsr) or an already-folded archive"
+    },
+    "root": {
+      "type": "string"
+    },
+    "pulsar_name": {
+      "type": "string",
+      "description": "Pulsar name (e.g. J0332+5454): the ephemeris is auto-exported from the catalogue for folding"
+    },
+    "ephemeris": {
+      "type": "string",
+      "description": "Par file / par artifact ID to fold with (alternative to pulsar_name)"
+    },
+    "dm": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Direct DM override for folding (alternative to pulsar_name/ephemeris)"
+    },
+    "fold": {
+      "type": "boolean",
+      "default": true,
+      "description": "Run the dspsr folding step (false when the input is already a folded archive)"
+    },
+    "rfi_strategy": {
+      "enum": [
+        "none",
+        "scan",
+        "zap"
+      ],
+      "default": "zap",
+      "description": "RFI handling: report only (scan), auto-zap the suspicious channels (zap), or skip (none)"
+    },
+    "rfi_method": {
+      "enum": [
+        "psrchive_median",
+        "spectral_kurtosis",
+        "bandpass"
+      ],
+      "default": "psrchive_median"
+    },
+    "rfi_threshold_sigma": {
+      "type": "number",
+      "minimum": 0.5,
+      "maximum": 20,
+      "default": 3.0
+    },
+    "build_standard": {
+      "type": "boolean",
+      "default": true,
+      "description": "Build a standard-profile artifact from the reduced archive"
+    },
+    "measure": {
+      "type": "boolean",
+      "default": true,
+      "description": "Measure profile metrics (S/N, width) on the reduced archive"
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 输出 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/pipeline_reduce.output.json",
+  "type": "object",
+  "required": ["result_type", "succeeded", "steps", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "succeeded": {"type": "boolean"},
+    "final_archive": {"oneOf": [{"$ref": "#/$defs/ArtifactRef"}, {"type": "null"}]},
+    "standard_profile": {"oneOf": [{"$ref": "#/$defs/ArtifactRef"}, {"type": "null"}]},
+    "rfi_report_artifact": {"type": ["string", "null"]},
+    "measure_metrics": {"oneOf": [{"$ref": "#/$defs/MeasureMetrics"}, {"type": "null"}]},
+    "measure_plot_artifact": {"type": ["string", "null"]},
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["step", "status", "duration_s"],
+        "properties": {
+          "step": {"enum": ["inspect", "fold", "rfi_scan", "rfi_zap", "standard", "measure"]},
+          "status": {"enum": ["ok", "skipped", "failed"]},
+          "artifact_id": {"type": ["string", "null"]},
+          "detail": {"type": ["string", "null"]},
+          "duration_s": {"type": "number", "minimum": 0}
+        },
+        "additionalProperties": false
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 错误码
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`, `E_TIMEOUT`
+
+---
+
 ## 6. 未来工具
 
 以下工具不进入 MVP，但预留接口方向。
 
-### 6.1 `artifact_delete`
-
-- **用途**：删除工作区 artifact
-- **Annotations**：`readOnlyHint=false`, `destructiveHint=true`, `idempotentHint=false`
-- **输入**：`artifact_id`、`confirm: true`
-- **行为**：默认移入回收站并设置 TTL；只有 `confirm=true` 才执行
-- **错误码**：`E_NOT_FOUND`, `E_INVALID_INPUT`, `E_QUOTA_EXCEEDED`
-
-### 6.2 `pipeline_reduce`
-
-- **用途**：一次完成 inspect → dedisperse → RFI → standard profile → measure
-- **输入**：`archive`、`pulsar_name?`、`dm?`、`rfi_strategy?`
-- **输出**：完整 artifact 链和每一步摘要
-- **注意**：复合工具必须返回中间产物，失败时保留已完成步骤，便于重试
-
-### 6.3 `compare_timing_models`
+### 6.1 `compare_timing_models`
 
 - **用途**：同一组 par/tim 分别用 PINT 和 tempo2 拟合，比较参数和残差
 - **输入**：`par`、`tim`、`fit_params?`
 - **输出**：两套拟合结果、参数差异、残差差异和 warnings
 
-### 6.4 `polarization_calibrate`
-
-- **用途**：基于 pac 的偏振校准
-- **输入**：`archive`、`calibrator_archive`、`cal_database?`
-- **输出**：校准后的 archive、校准参数和诊断图
-- **注意**：强依赖观测系统和校准源，需单独设计
-
-### 6.5 `search_mode_process`
+### 6.2 `search_mode_process`
 
 - **用途**：搜索模式数据处理（PRESTO / SIGPROC / heimdall）
 - **输入**：`filterbank`、`dm_range`、`algorithm`

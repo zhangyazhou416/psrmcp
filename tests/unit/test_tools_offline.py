@@ -879,3 +879,226 @@ async def test_rvm_fit_poln_incomplete_envelope(ctx, registry, tmp_path, monkeyp
     )
     assert out.is_error is True
     assert out.structured_content["error"]["code"] == ErrorCode.INVALID_INPUT.value
+
+
+# ------------------------------------------------------- artifact_delete
+
+async def test_artifact_delete_confirm_and_trash(ctx, registry):
+    from datetime import datetime, timezone
+
+    from psrmcp.models.common import ArtifactKind, Provenance
+
+    prov = Provenance(tool="t", tool_version="0", backend="b", params={},
+                      started_at=datetime.now(timezone.utc), duration_s=0.0)
+    parent = ctx.store.commit_text(text="p", filename="p.ar", kind=ArtifactKind.ARCHIVE,
+                                   format_name="PSRARCHIVE", provenance=prov)
+    child = ctx.store.commit_text(text="c", filename="c.ar", kind=ArtifactKind.ARCHIVE,
+                                  format_name="PSRARCHIVE", provenance=prov,
+                                  parents=[parent.artifact_id])
+
+    # refusing to run without confirm
+    out = await registry.dispatch("artifact_delete", {"artifact_id": parent.artifact_id})
+    assert out.is_error is True
+    err = out.structured_content["error"]
+    assert err["code"] == ErrorCode.INVALID_INPUT.value
+    assert "confirm" in err["hint"]
+
+    # a parent with live children is refused
+    out = await registry.dispatch("artifact_delete",
+                                  {"artifact_id": parent.artifact_id, "confirm": True})
+    assert out.is_error is True
+    err = out.structured_content["error"]
+    assert err["code"] == ErrorCode.OUTPUT_CONFLICT.value
+    assert child.artifact_id in err["message"]
+
+    # delete the descendant first, then the parent lands in the trash
+    out = await registry.dispatch("artifact_delete",
+                                  {"artifact_id": child.artifact_id, "confirm": True})
+    assert out.is_error is False, out.structured_content
+    assert out.structured_content["trashed"] is True
+    assert (ctx.store.trash_dir / child.artifact_id).exists()
+
+    out = await registry.dispatch("artifact_delete",
+                                  {"artifact_id": parent.artifact_id, "confirm": True})
+    assert out.is_error is False
+    assert out.structured_content["artifact_id"] == parent.artifact_id
+    assert (ctx.store.trash_dir / parent.artifact_id).exists()
+
+    # gone from the index and NOT_FOUND on repeat (not idempotent)
+    out = await registry.dispatch("artifact_list", {})
+    assert out.is_error is False
+    ids = {a["artifact_id"] for a in out.structured_content["artifacts"]}
+    assert child.artifact_id not in ids and parent.artifact_id not in ids
+    out = await registry.dispatch("artifact_delete",
+                                  {"artifact_id": child.artifact_id, "confirm": True})
+    assert out.is_error is True
+    assert out.structured_content["error"]["code"] == ErrorCode.NOT_FOUND.value
+
+
+# -------------------------------------------------------- pipeline_reduce
+
+def _fake_artifact(ctx, name):
+    from datetime import datetime, timezone
+
+    from psrmcp.models.common import ArtifactKind, Provenance
+
+    prov = Provenance(tool="pipeline_test", tool_version="0", backend="fake", params={},
+                      started_at=datetime.now(timezone.utc), duration_s=0.0)
+    return ctx.store.commit_text(text="x", filename=name, kind=ArtifactKind.ARCHIVE,
+                                 format_name="PSRARCHIVE", provenance=prov)
+
+
+def _install_fake_steps(monkeypatch, ctx, *, zap_fails=False, measure_fails=False):
+    from types import SimpleNamespace
+
+    from psrmcp.models.results import Dimensions, MeasureMetrics, SuggestedMask
+
+    folded = _fake_artifact(ctx, "folded.ar")
+    zapped = _fake_artifact(ctx, "zapped.ar")
+    standard = _fake_artifact(ctx, "standard.ar")
+
+    async def fake_inspect(ctx, inp, progress):
+        return SimpleNamespace(dimensions=Dimensions(nsubint=1, nchan=128, npol=2, nbin=1024))
+
+    async def fake_fold(ctx, inp, progress):
+        return SimpleNamespace(artifact=folded, dm_used=26.76, warnings=[])
+
+    async def fake_scan(ctx, inp, progress):
+        return SimpleNamespace(
+            suggested_mask=SuggestedMask(channels=[3, 7], n_channels=2, fraction=2 / 128),
+            statistics={}, plot_artifact="art_plotfake")
+
+    async def fake_zap(ctx, inp, progress):
+        if zap_fails:
+            from psrmcp.errors import PsrmcpError, ErrorCode
+            raise PsrmcpError(ErrorCode.PROCESS_FAILED, "paz exploded")
+        return SimpleNamespace(artifact=zapped, n_channels_zapped=2, zapped_fraction=2 / 128,
+                               warnings=[])
+
+    async def fake_standard(ctx, inp, progress):
+        return SimpleNamespace(artifact=standard, nbin=1024, snr=50.0, warnings=[])
+
+    async def fake_measure(ctx, inp, progress):
+        if measure_fails:
+            raise RuntimeError("psrstat lost")
+        return SimpleNamespace(metrics=MeasureMetrics(snr=48.2, width=None, flux_mjy=None),
+                               plot_artifact="art_measplot", warnings=[])
+
+    monkeypatch.setattr("psrmcp.tools.pipeline._inspect_step", fake_inspect)
+    monkeypatch.setattr("psrmcp.tools.pipeline._fold_step", fake_fold)
+    monkeypatch.setattr("psrmcp.tools.pipeline._rfi_scan_step", fake_scan)
+    monkeypatch.setattr("psrmcp.tools.pipeline._rfi_zap_step", fake_zap)
+    monkeypatch.setattr("psrmcp.tools.pipeline._standardize_step", fake_standard)
+    monkeypatch.setattr("psrmcp.tools.pipeline._measure_step", fake_measure)
+    return {"folded": folded, "zapped": zapped, "standard": standard}
+
+
+async def test_pipeline_reduce_full_chain(ctx, registry, tmp_path, monkeypatch):
+    _archive_env(ctx, tmp_path)
+    refs = _install_fake_steps(monkeypatch, ctx)
+
+    out = await registry.dispatch("pipeline_reduce", {
+        "archive": "obs.ar", "pulsar_name": "J0332+5454", "execution_mode": "sync"})
+    assert out.is_error is False, out.structured_content
+    body = out.structured_content
+    assert body["succeeded"] is True
+    assert body["final_archive"]["artifact_id"] == refs["zapped"].artifact_id
+    assert body["standard_profile"]["artifact_id"] == refs["standard"].artifact_id
+    assert body["rfi_report_artifact"] == "art_plotfake"
+    assert body["measure_metrics"]["snr"] == 48.2
+    assert body["measure_plot_artifact"] == "art_measplot"
+    statuses = [(s["step"], s["status"]) for s in body["steps"]]
+    assert statuses == [
+        ("inspect", "ok"), ("fold", "ok"), ("rfi_scan", "ok"),
+        ("rfi_zap", "ok"), ("standard", "ok"), ("measure", "ok"),
+    ]
+    assert body["warnings"] == []
+
+
+async def test_pipeline_reduce_mid_chain_failure_keeps_steps(ctx, registry, tmp_path, monkeypatch):
+    """A failed step stops the chain but keeps completed artifacts; the
+    remaining steps are reported as skipped (composite-tool rule)."""
+    _archive_env(ctx, tmp_path)
+    _install_fake_steps(monkeypatch, ctx, zap_fails=True)
+
+    out = await registry.dispatch("pipeline_reduce", {
+        "archive": "obs.ar", "pulsar_name": "J0332+5454", "execution_mode": "sync"})
+    assert out.is_error is False, out.structured_content
+    body = out.structured_content
+    assert body["succeeded"] is False
+    statuses = {s["step"]: s["status"] for s in body["steps"]}
+    assert statuses == {
+        "inspect": "ok", "fold": "ok", "rfi_scan": "ok",
+        "rfi_zap": "failed", "standard": "skipped", "measure": "skipped",
+    }
+    codes = [w["code"] for w in body["warnings"]]
+    assert "W_PIPELINE_STEP_FAILED" in codes
+    assert "paz exploded" in [w["message"] for w in body["warnings"]][0]
+
+
+async def test_pipeline_reduce_minimal_plan_and_dm_source(ctx, registry, tmp_path, monkeypatch):
+    _archive_env(ctx, tmp_path)
+    _install_fake_steps(monkeypatch, ctx)
+
+    # fold=false + no DM source is fine (fold skipped, nothing needed)
+    out = await registry.dispatch("pipeline_reduce", {
+        "archive": "obs.ar", "fold": False, "rfi_strategy": "none",
+        "build_standard": False, "measure": False, "execution_mode": "sync"})
+    assert out.is_error is False, out.structured_content
+    body = out.structured_content
+    assert body["succeeded"] is True
+    assert {s["step"]: s["status"] for s in body["steps"]} == {
+        "inspect": "ok", "fold": "skipped", "rfi_scan": "skipped",
+        "rfi_zap": "skipped", "standard": "skipped", "measure": "skipped",
+    }
+    assert body["final_archive"] is None
+
+    # fold=true without any DM source is rejected up front
+    out = await registry.dispatch("pipeline_reduce", {"archive": "obs.ar", "execution_mode": "sync"})
+    assert out.is_error is True
+    assert out.structured_content["error"]["code"] == ErrorCode.INVALID_INPUT.value
+
+
+async def test_dedisperse_dm_only_validation(ctx, registry, tmp_path, monkeypatch):
+    """ephemeris became optional: folding needs ephemeris or dm_override."""
+    _archive_env(ctx, tmp_path)
+    monkeypatch.setattr("psrmcp.tools.archive._tool", lambda c, n: f"/fake/{n}")
+    out = await registry.dispatch("dedisperse", {"input": "obs.ar", "execution_mode": "sync"})
+    assert out.is_error is True
+    assert out.structured_content["error"]["code"] == ErrorCode.INVALID_INPUT.value
+
+
+async def test_rfi_scan_snr_mad_flagging(ctx, registry, tmp_path, monkeypatch):
+    """The backfilled _flag_stats runs psrstat's chan loop and flags S/N
+    outliers via MAD; missing/zero-S/N channels are always flagged."""
+    data = _archive_env(ctx, tmp_path)
+    monkeypatch.setattr("psrmcp.tools.archive._tool", lambda c, n: f"/fake/{n}")
+    monkeypatch.setattr("psrmcp.tools.rfi._psrchive_tool", lambda c, n: f"/fake/{n}")
+
+    nchan = 64
+    lines = []
+    for ch in range(nchan):
+        lines.append(f"obs.ar chan={ch} 10.0")
+    lines[1] = "obs.ar chan=1 90.0"     # RFI outlier
+    lines[2] = "obs.ar chan=2 -"        # unresolvable
+    lines[3] = "obs.ar chan=3 0.0"      # dead
+    runner = _ScriptedRunner({"vap": (0, _VAP_DIMS, ""), "psrstat": (0, "\n".join(lines) + "\n", "")})
+    ctx.runner = runner
+
+    out = await registry.dispatch("rfi_scan", {"archive": "obs.ar", "generate_plot": False})
+    assert out.is_error is False, out.structured_content
+    body = out.structured_content
+    mask = body["suggested_mask"]
+    assert mask["channels"][0] == 1          # the outlier
+    assert 2 in mask["channels"] and 3 in mask["channels"]
+    assert mask["n_channels"] >= 3
+    assert body["statistics"]["method"] == "snr_mad"
+    assert body["statistics"]["median_snr"] == pytest.approx(10.0)
+    argv = [c for c in runner.calls if c[0] == "/fake/psrstat"][0]
+    assert "-l" in argv and "chan=0-63" in argv and "-c" in argv and "snr" in argv
+
+    # bandpass method: refused with an explicit hint on this build
+    out = await registry.dispatch(
+        "rfi_scan", {"archive": "obs.ar", "method": "bandpass", "generate_plot": False})
+    assert out.is_error is True
+    assert "bandpass" in out.structured_content["error"]["message"]

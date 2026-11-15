@@ -18,7 +18,7 @@ Design principles: **task-oriented, controlled parameters, structured results, f
 
 Missing backends do not crash the server: `pulsar_environment` reports available/reason for each one, and tools that depend on a missing backend return `E_ENV_MISSING` with a hint.
 
-## The 31 tools (grouped by processing pipeline)
+## The 33 tools (grouped by processing pipeline)
 
 **Environment and data discovery**
 
@@ -75,6 +75,12 @@ Missing backends do not crash the server: `pulsar_environment` reports available
 | `polarization_calibrate` ⏱ | pac polarimetric (+ flux) calibration: match PolnCal/FluxCal scans or apply a pcm/pacv solution; SingleAxis/Polar/Reception models, relaxable matching criteria |
 | `calibrator_database` ⏱ | pac calibrator database summary (database.txt) built from calibrator scans, entries indexed and returned inline |
 
+**Composite pipeline**
+
+| Tool | Purpose |
+|---|---|
+| `pipeline_reduce` ⏱ | one-call reduction: inspect -> fold (dspsr) -> RFI scan/auto-zap -> standard profile -> measure; per-step statuses and artifacts, failed runs keep completed steps for retry |
+
 **Timing**
 
 | Tool | Purpose |
@@ -88,6 +94,7 @@ Missing backends do not crash the server: `pulsar_environment` reports available
 | Tool | Purpose |
 |---|---|
 | `artifact_list` | list workspace artifacts (filterable by kind) |
+| `artifact_delete` | delete an artifact (moves to a 7-day trash area; parent artifacts with derived children are protected) |
 | `job_get` | query the status/result of an async job |
 | `job_cancel` | cancel a running job (at the process-group level) |
 
@@ -124,5 +131,5 @@ The artifacts of every step (archives, .tim/.par, plots, logs) carry provenance 
 
 - [TUTORIAL.md](TUTORIAL.md) — usage tutorial (from installation to a full processing-chain walkthrough)
 - [DESIGN.md](DESIGN.md) — architecture and execution model
-- [TOOLS.md](TOOLS.md) — complete JSON Schema contracts for all 31 tools
+- [TOOLS.md](TOOLS.md) — complete JSON Schema contracts for all 33 tools
 - [INSTALL.md](INSTALL.md) — one-click installation of the software stack

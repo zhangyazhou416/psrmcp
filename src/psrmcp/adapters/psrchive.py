@@ -1009,3 +1009,37 @@ _PSRMODEL_KEYS: tuple[tuple[str, str], ...] = (
     ("psi_0", "psi0_deg"), ("phi_0", "phi0_deg"), ("alpha", "alpha_deg"),
     ("beta", "beta_deg"), ("zeta", "zeta_deg"),
 )
+
+
+def psrstat_channels_cmd(binary: str, source: str, nchan: int) -> list[str]:
+    """Per-channel SNR via psrstat's loop option (contract verified on
+    PSRCHIVE 2026-10-16 on 2026-11-15): `-Q -l 'chan=0-<nchan-1>' -c snr`
+    prints one row per channel of the FIRST sub-integration, e.g.
+    `obs.ar chan=7 12.5`; values that cannot be computed print as '-'."""
+    return [binary, "-Q", "-l", f"chan=0-{nchan - 1}", "-c", "snr", source]
+
+
+def parse_psrstat_channels(text: str) -> list[float | None]:
+    """Parse psrstat_channels_cmd output into a per-channel SNR list indexed
+    by channel number (None where psrstat printed '-')."""
+    out: list[float | None] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        chan: int | None = None
+        value: float | None = None
+        for tok in stripped.split():
+            if tok.startswith("chan="):
+                try:
+                    chan = int(tok[5:])
+                except ValueError:
+                    chan = None
+            elif "=" not in tok:
+                value = None if tok == "-" else _coerce(tok) \
+                    if isinstance(_coerce(tok), float) else None
+        if chan is not None:
+            while len(out) <= chan:
+                out.append(None)
+            out[chan] = value
+    return out

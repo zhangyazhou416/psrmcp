@@ -45,12 +45,24 @@ class Workspace:
 
 
 class ArtifactStore:
-    """Immutable artifacts: write to tmp, then rename into place. Manifest is append-only."""
+    """Immutable artifacts: write to tmp, then rename into place. Manifest is append-only.
+
+    Deletion moves the artifact directory into the workspace trash area
+    (same-filesystem rename) and drops it from the session index; trash
+    entries older than TRASH_TTL_DAYS are purged on the next delete."""
+
+    TRASH_TTL_DAYS = 7
 
     def __init__(self, ws: Workspace, *, max_output_bytes: int) -> None:
         self._ws = ws
         self._max_output_bytes = max_output_bytes
         self._index: dict[str, ArtifactRef] = {}
+
+    @property
+    def trash_dir(self) -> Path:
+        out = self._ws.root / "trash"
+        out.mkdir(exist_ok=True)
+        return out
 
     # -- lookup ---------------------------------------------------------------
 
@@ -84,6 +96,71 @@ class ArtifactStore:
         page = refs[start : start + limit]
         next_cursor = page[-1].artifact_id if start + limit < len(refs) and page else None
         return page, next_cursor
+
+    # -- deletion -------------------------------------------------------------
+
+    def children_of(self, artifact_id: str) -> list[str]:
+        """Artifact ids that reference artifact_id as a provenance parent."""
+        return [
+            r.artifact_id
+            for r in self._index.values()
+            if artifact_id in (r.parents or [])
+        ]
+
+    def delete(self, artifact_id: str) -> ArtifactRef:
+        """Move an artifact to the trash area and drop it from the index.
+
+        Raises E_NOT_FOUND for unknown ids and E_OUTPUT_CONFLICT when other
+        artifacts reference it as a parent (delete the descendants first).
+        The manifest is append-only, so the deletion is recorded there."""
+        ref = self.get(artifact_id)
+        children = self.children_of(artifact_id)
+        if children:
+            raise PsrmcpError(
+                ErrorCode.OUTPUT_CONFLICT,
+                f"artifact {artifact_id} has {len(children)} derived artifact(s) "
+                f"that reference it as a parent: {', '.join(children[:5])}"
+                + (" ..." if len(children) > 5 else ""),
+                hint="delete the derived artifacts first, or keep the parent",
+            )
+        src = self._ws.root / str(ref.path)
+        trash_dst = self.trash_dir / artifact_id
+        # artifacts live at sessions/<sid>/artifacts/<artifact_id>/<file>:
+        # move the whole per-id directory so nothing is left behind
+        parent = src.parent
+        if parent.name == artifact_id and parent.parent.name == "artifacts":
+            os.rename(parent, trash_dst)
+        elif src.is_file():
+            os.rename(src, trash_dst)
+        elif src.is_dir():
+            os.rename(src, trash_dst)
+        self._index.pop(artifact_id, None)
+        record = {
+            "artifact_id": artifact_id,
+            "kind": str(ref.kind),
+            "sha256": ref.sha256,
+            "size_bytes": ref.size_bytes,
+            "created_at": ref.created_at.isoformat(),
+            "deleted": True,
+        }
+        with self._ws.manifest_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        self._purge_trash()
+        return ref
+
+    def _purge_trash(self, ttl_days: int = TRASH_TTL_DAYS) -> None:
+        """Best-effort removal of trash entries older than the TTL."""
+        now = time.time()
+        cutoff = now - ttl_days * 86400
+        for entry in self.trash_dir.iterdir():
+            try:
+                if entry.stat().st_mtime < cutoff:
+                    if entry.is_dir():
+                        shutil.rmtree(entry, ignore_errors=True)
+                    else:
+                        entry.unlink(missing_ok=True)
+            except OSError:
+                continue
 
     # -- creation -------------------------------------------------------------
 

@@ -67,14 +67,16 @@ async def _run(ctx: AppContext, inp: DedisperseInput, progress) -> DedisperseRes
 
     source = ctx.resolver.resolve(inp.input, root=inp.root, what="input")
 
-    # Ephemeris: artifact / par path / pulsar name.
+    # Ephemeris: artifact / par path / pulsar name; omitted entirely when
+    # folding with dm_override only (DM falls back to the input header).
     par_artifact_id: str | None = None
-    if inp.ephemeris.startswith("art_"):
+    par_path = None
+    if inp.ephemeris and inp.ephemeris.startswith("art_"):
         par_path = ctx.store.lookup_id(inp.ephemeris)
         if par_path is None:
             raise PsrmcpError(ErrorCode.NOT_FOUND, f"unknown artifact: {inp.ephemeris}")
         par_artifact_id = inp.ephemeris
-    else:
+    elif inp.ephemeris:
         try:
             resolved_par = ctx.resolver.resolve(inp.ephemeris, root=inp.root, what="ephemeris")
             par_path = resolved_par.resolved

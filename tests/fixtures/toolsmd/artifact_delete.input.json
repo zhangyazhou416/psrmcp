@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/artifact_delete.input.json",
+  "type": "object",
+  "required": [
+    "artifact_id"
+  ],
+  "properties": {
+    "artifact_id": {
+      "type": "string",
+      "pattern": "^art_[A-Za-z0-9_-]{8,64}$",
+      "description": "Artifact to delete (moved to the workspace trash area, kept 7 days)"
+    },
+    "confirm": {
+      "type": "boolean",
+      "default": false,
+      "description": "Must be true to execute the deletion"
+    }
+  },
+  "additionalProperties": false
+}

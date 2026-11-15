@@ -1,4 +1,4 @@
-"""Input models for all 31 tools (TOOLS.md section 5 schemas, 1:1).
+"""Input models for all 33 tools (TOOLS.md section 5 schemas, 1:1).
 
 All models forbid extra properties, mirroring `additionalProperties: false`.
 """
@@ -210,7 +210,7 @@ class DedisperseInput(BaseModel):
     model_config = FORBID
     input: str
     root: str | None = None
-    ephemeris: str
+    ephemeris: str | None = None
     mode: Literal["coherent", "incoherent"] = "coherent"
     dm_override: float | None = Field(default=None, gt=0)
     output_format: Literal["psrfits", "psrarchive"] = "psrfits"
@@ -220,6 +220,15 @@ class DedisperseInput(BaseModel):
     threads: int | None = Field(default=None, ge=1, le=64)
     output_name: str | None = Field(default=None, max_length=128)
     execution_mode: ExecutionMode = ExecutionMode.AUTO
+
+    @model_validator(mode="after")
+    def _check_dm_source(self) -> "DedisperseInput":
+        if self.ephemeris is None and self.dm_override is None:
+            raise ValueError(
+                "provide ephemeris (par file, par artifact ID, or pulsar name "
+                "for auto-export) or dm_override"
+            )
+        return self
 
 
 class RfiScanInput(BaseModel):
@@ -636,6 +645,53 @@ class ArtifactListInput(BaseModel):
     limit: int = Field(default=50, ge=1, le=500)
     cursor: str | None = None
     created_after: str | None = None
+
+
+class ArtifactDeleteInput(BaseModel):
+    """Delete a workspace artifact: the file is moved to the workspace trash
+    area (kept for 7 days, then purged) and dropped from the session index.
+    Requires `confirm=true` — this is the only destructive tool in the
+    suite. Artifacts that other artifacts reference as a provenance parent
+    cannot be deleted until the descendants are deleted."""
+
+    model_config = FORBID
+    artifact_id: str = Field(pattern=r"^art_[A-Za-z0-9_-]{8,64}$")
+    confirm: bool = False
+
+
+class PipelineReduceInput(BaseModel):
+    """One-call reduction chain: inspect -> fold (dspsr) -> RFI (scan and
+    optionally zap) -> standard profile -> measure. Every step returns its
+    intermediate artifact and a per-step status; on a step failure the chain
+    stops, completed steps stay available in `steps`, and `succeeded` is
+    false — rerun with the same inputs to retry. The DM source for folding
+    is one of `pulsar_name` (ephemeris auto-exported from the catalogue),
+    `ephemeris` (par file or par artifact ID), or `dm` (direct override)."""
+
+    model_config = FORBID
+    archive: str
+    root: str | None = None
+    pulsar_name: str | None = None
+    ephemeris: str | None = None
+    dm: float | None = Field(default=None, gt=0)
+    fold: bool = True
+    rfi_strategy: Literal["none", "scan", "zap"] = "zap"
+    rfi_method: Literal["psrchive_median", "spectral_kurtosis", "bandpass"] = "psrchive_median"
+    rfi_threshold_sigma: float = Field(default=3.0, ge=0.5, le=20)
+    build_standard: bool = True
+    measure: bool = True
+    execution_mode: ExecutionMode = ExecutionMode.AUTO
+
+    @model_validator(mode="after")
+    def _check_dm_source(self) -> "PipelineReduceInput":
+        if self.fold:
+            sources = [s for s in (self.pulsar_name, self.ephemeris, self.dm) if s]
+            if len(sources) == 0:
+                raise ValueError(
+                    "fold=true needs a DM source: pulsar_name (ephemeris "
+                    "auto-exported), ephemeris (par file or artifact ID), or dm"
+                )
+        return self
 
 
 class JobGetInput(BaseModel):

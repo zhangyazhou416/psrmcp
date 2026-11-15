@@ -20,7 +20,7 @@ TOOL_NAMES = sorted(p.name.removesuffix(".input.json") for p in FIXTURES.glob("*
 
 def test_tool_count_matches_registry(registry):
     assert TOOL_NAMES == sorted(registry.names())
-    assert len(TOOL_NAMES) == 31
+    assert len(TOOL_NAMES) == 33
 
 
 def _fixture_schema(name: str) -> dict:
@@ -93,7 +93,9 @@ ANNOTATIONS_TABLE = [
     ("toa_extract", False, False, True, False, True),
     ("timing_fit", False, False, True, False, True),
     ("timing_diagnose", True, False, True, False, False),
+    ("pipeline_reduce", False, False, True, False, True),
     ("artifact_list", True, False, True, False, False),
+    ("artifact_delete", False, True, False, False, False),
     ("job_get", True, False, True, False, False),
     ("job_cancel", False, False, False, False, False),
 ]

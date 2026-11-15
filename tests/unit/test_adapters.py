@@ -594,3 +594,17 @@ def test_parse_psrmodel_output():
         "Pulsar::FaradayRotation::execute1\nError::InvalidState\n"
         "\tincomplete polarization information\n")
     assert failed["chisq"] is None and failed["poln_incomplete"]
+
+
+def test_psrstat_channels_cmd_and_parse():
+    argv = psa.psrstat_channels_cmd("psrstat", "obs.ar", 4)
+    assert argv == ["psrstat", "-Q", "-l", "chan=0-3", "-c", "snr", "obs.ar"]
+    sample = (
+        "obs.ar chan=0 7.465\n"
+        "obs.ar chan=1 15.079\n"
+        "obs.ar chan=2 -\n"
+        "obs.ar chan=5 0.0\n"
+    )
+    snrs = psa.parse_psrstat_channels(sample)
+    assert snrs == [7.465, 15.079, None, None, None, 0.0]
+    assert psa.parse_psrstat_channels("") == []

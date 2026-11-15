@@ -18,7 +18,7 @@ psrmcp 把脉冲星射电天文的专业处理软件栈(**dspsr / PSRCHIVE / tem
 
 后端缺失时服务器不崩溃:`pulsar_environment` 逐个报告 available/reason,依赖缺失后端的工具返回 `E_ENV_MISSING` 与提示。
 
-## 31 个工具(按处理链路分组)
+## 33 个工具(按处理链路分组)
 
 **环境与数据发现**
 
@@ -75,6 +75,12 @@ psrmcp 把脉冲星射电天文的专业处理软件栈(**dspsr / PSRCHIVE / tem
 | `polarization_calibrate` ⏱ | pac 偏振(+流量)定标:匹配 PolnCal/FluxCal 扫描或直接应用 pcm/pacv 模型解;SingleAxis/Polar/Reception 模型,匹配判据可放宽 |
 | `calibrator_database` ⏱ | pac 定标器数据库摘要(database.txt),由定标器扫描构建,条目索引后内联返回 |
 
+**组合管线**
+
+| Tool | Purpose |
+|---|---|
+| `pipeline_reduce` ⏱ | 一次调用完成归约:inspect -> 折叠(dspsr)-> RFI 扫描/自动消噪 -> 标准轮廓 -> 测量;逐步报告状态与产物,失败时保留已完成步骤以便重试 |
+
 **计时**
 
 | 工具 | 作用 |
@@ -88,6 +94,7 @@ psrmcp 把脉冲星射电天文的专业处理软件栈(**dspsr / PSRCHIVE / tem
 | 工具 | 作用 |
 |---|---|
 | `artifact_list` | 列出 workspace 产物(支持按 kind 过滤) |
+| `artifact_delete` | 删除产物(移入保留 7 天的回收站;仍有后代引用的父产物受保护) |
 | `job_get` | 查询异步任务状态/结果 |
 | `job_cancel` | 取消运行中的任务(进程组级) |
 
@@ -124,5 +131,5 @@ timing_diagnose      诊断:离群 TOA、是否需要 DMX/JUMP
 
 - [TUTORIAL.md](TUTORIAL.md) — 使用教程(从安装到完整处理链实战)
 - [DESIGN.md](DESIGN.md) — 架构与执行模型
-- [TOOLS.md](TOOLS.md) — 31 个工具的完整 JSON Schema 契约
+- [TOOLS.md](TOOLS.md) — 33 个工具的完整 JSON Schema 契约
 - [INSTALL.md](INSTALL.md) — 软件栈一键安装

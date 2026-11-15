@@ -361,3 +361,30 @@ def test_psrmodel_text_fit_or_stokes_envelope(tmp_path):
             f"no chisq and no Stokes envelope — unexpected psrmodel output: "
             f"{out.stderr[-400:]!r}"
         )
+
+
+def test_psrstat_per_channel_snr():
+    """psrstat -Q -l 'chan=0-<n-1>' -c snr prints one row per channel of the
+    first sub-integration; only `snr` resolves in the chan loop context (wt/
+    mean/variance print '-'). rfi_scan's flagging relies on this."""
+    from psrmcp.adapters import psrchive as psa
+
+    psrstat, vap = _which("psrstat"), _which("vap")
+    archive = _archive()
+    if not (psrstat and vap and archive):
+        pytest.skip("set PSRMCP_CONTRACT_ARCHIVE=<archive path> to run")
+
+    meta = psa.parse_vap(subprocess.run(psa.vap_cmd(vap, archive),
+                                        capture_output=True, text=True, check=True).stdout)
+    nchan = int(meta.get("nchan") or 0)
+    assert nchan > 0, meta
+    out = subprocess.run(psa.psrstat_channels_cmd(psrstat, archive, nchan),
+                         capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr[-500:]
+    snrs = psa.parse_psrstat_channels(out.stdout)
+    assert len(snrs) == nchan, f"expected {nchan} channel rows, got {len(snrs)}"
+    assert any(v is not None for v in snrs), "no per-channel snr values resolved"
+    # negative control: wt/mean/variance do NOT resolve in this context
+    probe = subprocess.run([psrstat, "-Q", "-l", "chan=0-1", "-c", "wt", archive],
+                           capture_output=True, text=True)
+    assert "-" in probe.stdout, "wt unexpectedly resolved per channel; update _flag_stats"

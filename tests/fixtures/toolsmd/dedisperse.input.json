@@ -3,8 +3,7 @@
   "$id": "https://psrmcp.local/schemas/dedisperse.input.json",
   "type": "object",
   "required": [
-    "input",
-    "ephemeris"
+    "input"
   ],
   "properties": {
     "input": {
@@ -16,7 +15,7 @@
     },
     "ephemeris": {
       "type": "string",
-      "description": "An artifact ID, a .par path under a read root, or a pulsar name"
+      "description": "An artifact ID, a .par path under a read root, or a pulsar name (auto-exported); required unless dm_override is given"
     },
     "mode": {
       "enum": [

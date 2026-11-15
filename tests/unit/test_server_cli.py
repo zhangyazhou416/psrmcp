@@ -39,7 +39,7 @@ def test_build_registry_yields_all(tmp_path):
     cfg.server.workspace = tmp_path / "ws"
     ctx = build_context(cfg)
     reg = build_registry(ctx)
-    assert len(reg.names()) == 31
+    assert len(reg.names()) == 33
 
     server = create_server(cfg)
     assert server.pulsar_registry is not None
