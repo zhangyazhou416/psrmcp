@@ -58,6 +58,8 @@ MCP `tools/call` 返回：
 约定：
 
 - `content`：Markdown 摘要，便于直接展示
+- **调用流程**：每条响应（成功或错误）末尾都追加 `**调用流程**` 段落，内含本次调用的 Mermaid `flowchart` —— 输入 artifact/文件 → 工具（后端 + 命令）→ 输出 artifact（或错误码）。会话级累计图可从 `pulsar://calls` 资源读取
+- **调用流程**：每条响应（成功或错误）末尾都追加 `**调用流程**` 段落，内含本次调用的 Mermaid `flowchart` —— 输入 artifact/文件 → 工具（后端 + 命令）→ 输出 artifact（或错误码）。会话级累计图可从 `pulsar://calls` 资源读取
 - `structuredContent`：严格符合本文件的 `outputSchema`
 - 图像通过 `content` 中的 `image` block 或 `resource_link` 返回
 - 错误时 `isError: true`，`structuredContent.error` 为 `ErrorBody`

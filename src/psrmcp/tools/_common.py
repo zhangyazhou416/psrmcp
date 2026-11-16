@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -41,6 +41,9 @@ class AppContext:
     python_exe: str = "python3"
     mcp_protocol_version: str = "2026-07-28"
     audit_log: Path | None = None
+    # per-session call journal (TOOLS.md 1.3): one entry per dispatch, used
+    # by the pulsar://calls session flow diagram
+    flow_log: list[dict[str, Any]] = field(default_factory=list)
 
 
 def make_provenance(

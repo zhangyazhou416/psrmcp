@@ -106,6 +106,7 @@ psrmcp 把脉冲星射电天文的专业处理软件栈(**dspsr / PSRCHIVE / tem
 ## 工程特性
 
 - **产物溯源**:每个结果都是 `art_xxx` 产物,记录 sha256、完整 provenance(命令 argv、参数、后端版本、父子谱系),工具间用 artifact ID 串流水线。
+- **调用流程图**:每次工具响应末尾都附 Mermaid `调用流程` 图(输入 → 工具/后端/命令 → 输出,或错误码);会话级全图见 `pulsar://calls` 资源,用户随时能看到自己的数据被如何处理。
 - **安全沙盒**:路径白名单(拒 `..`/控制字符/symlink 逃逸)、命令只走 argv 数组不进 shell、rlimits、超时先 SIGTERM 后 SIGKILL 进程组、stderr 尾部落 log 产物。
 - **结构化输出**:每个工具返回 Markdown 摘要(content)+ 结构化 JSON(structuredContent);错误统一信封 `code/message/hint/retryable/log_artifact_id`,不暴露裸 traceback。
 - **绘图**:所有图走 Python matplotlib,以 PNG plot artifact 交付(轮廓、残差等),无 PGPLOT 依赖。

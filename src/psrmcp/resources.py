@@ -11,6 +11,7 @@ import base64
 from mcp.types import BlobResourceContents, Resource, TextResourceContents
 
 from .errors import ErrorCode, PsrmcpError, not_found
+from . import flow
 from .models.inputs import CatalogGetInput, EphemerisExportInput, PulsarEnvironmentInput
 from .tools._common import DEFAULT_PROGRESS, AppContext
 from .tools.catalog import _export, _get
@@ -57,6 +58,14 @@ def list_resources(ctx: AppContext) -> list[Resource]:
             description="Backend availability, versions, workspace, and limits",
             mimeType=MIME_JSON,
         ),
+        Resource(
+            uri="pulsar://calls",
+            name="Session call flow",
+            description="Mermaid diagram of every tool call made in this session "
+                        "(inputs -> tool -> outputs); read after chaining tools to "
+                        "review the pipeline as executed",
+            mimeType=MIME_MD,
+        ),
     ]
     for topic, text in _DOCS.items():
         items.append(Resource(
@@ -87,6 +96,10 @@ async def read_resource(ctx: AppContext, uri: str) -> list[TextResourceContents 
     if uri == "pulsar://environment":
         result = await run_environment(ctx, PulsarEnvironmentInput(), DEFAULT_PROGRESS)
         return [TextResourceContents(uri=uri, mimeType=MIME_JSON, text=result.model_dump_json(indent=2))]
+
+    if uri == "pulsar://calls":
+        return [TextResourceContents(uri=uri, mimeType=MIME_MD,
+                                     text=flow.session_diagram(ctx.flow_log))]
 
     if parts and parts[0] == "docs":
         topic = parts[1] if len(parts) > 1 else ""

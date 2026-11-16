@@ -1282,3 +1282,43 @@ async def test_dynamic_spectra_commits_table(ctx, registry, tmp_path, monkeypatc
         "archive": "obs.ar", "standard_profile": "std.ar", "execution_mode": "sync"})
     assert out.is_error is True
     assert out.structured_content["error"]["code"] == ErrorCode.PROCESS_FAILED.value
+
+
+# ------------------------------------------------------------ call flow
+
+async def test_flow_diagram_appended_to_success(ctx, registry):
+    out = await registry.dispatch("pulsar_environment", {})
+    text = out.content[0].text
+    assert "```mermaid" in text and "调用流程" in text
+    assert "pulsar_environment" in text and "flowchart" in text
+    assert len(ctx.flow_log) == 1 and ctx.flow_log[0]["tool"] == "pulsar_environment"
+
+
+async def test_flow_diagram_on_error(ctx, registry):
+    out = await registry.dispatch("artifact_list", {"kind": "bogus_kind"})  # enum reject
+    assert out.is_error is True
+    text = out.content[0].text
+    assert "❌" in text and "E_INVALID_INPUT" in text
+    assert ctx.flow_log[-1]["ok"] is False
+
+
+async def test_flow_diagram_chains_artifacts(ctx, registry):
+    """Committed artifacts become output nodes; their artifact ids feed the
+    session diagram as reusable input nodes."""
+    from datetime import datetime, timezone
+
+    from psrmcp.models.common import ArtifactKind, Provenance
+
+    prov = Provenance(tool="t", tool_version="0", backend="b", params={},
+                      started_at=datetime.now(timezone.utc), duration_s=0.0)
+    ctx.store.commit_text(text="x", filename="a.tim", kind=ArtifactKind.TIM,
+                          format_name="tempo2", provenance=prov)
+    out = await registry.dispatch("artifact_list", {})
+    assert "📤" in out.content[0].text
+
+    from psrmcp.resources import read_resource
+    blocks = await read_resource(ctx, "pulsar://calls")
+    md = blocks[0].text
+    assert "flowchart TD" in md and "artifact_list" in md and "a.tim" in md or \
+        "📥" in md
+    assert "本会话调用流程" in md

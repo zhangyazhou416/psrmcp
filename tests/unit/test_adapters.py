@@ -681,3 +681,42 @@ def test_parse_psrflux_ds():
     assert d["n_subints"] == 2 and d["n_channels"] == 1
     assert d["mjd0"] == pytest.approx(60190.506261)
     assert d["flux_method"] == "StandardFlux"
+
+
+def test_flow_diagram_escaping_and_session():
+    from psrmcp import flow
+
+    structured = {
+        "result_type": "completed",
+        "artifact": {"artifact_id": "art_x", "path": "sessions/s/artifacts/art_x/a[1].ar",
+                     "kind": "archive", "provenance": {"backend": "pam",
+                                                       "command": ["pam", "-f", "2"]}},
+    }
+    diagram = flow.call_diagram("archive_transform", {"archive": "obs.ar"},
+                                structured, ok=True)
+    assert "flowchart LR" in diagram and "pam -f 2" in diagram
+    assert "[" not in diagram.split("📥")[1].split("]")[0]  # node text sanitized
+    assert "art_x" in diagram and "a(1).ar" in diagram
+
+    err = flow.call_diagram("rvm_fit", {"archive": "obs.ar"},
+                            {"result_type": "failed",
+                             "error": {"code": "E_INVALID_INPUT",
+                                       "message": 'needs "Stokes" Q/U [npol<4]'}},
+                            ok=False, error={"code": "E_INVALID_INPUT",
+                                             "message": 'needs "Stokes" Q/U [npol<4]'})
+    assert "❌ E_INVALID_INPUT" in err
+    label = err.split('E["')[1].split('"]')[0]  # the node label only
+    assert '"' not in label and "[npol<4]" not in label and "(npol<4)" in label
+
+    records = [
+        {"tool": "archive_merge", "ok": True, "inputs": ["a.ar", "b.ar"],
+         "outputs": ["art_1"], "backend": "psradd", "command": "psradd -o m.ar",
+         "at": "2026-11-16T00:00:00+00:00"},
+        {"tool": "profile_stability", "ok": True, "inputs": ["art_1"],
+         "outputs": ["art_2", "art_3"], "backend": "psrstability", "command": "",
+         "at": "2026-11-16T00:01:00+00:00"},
+    ]
+    md = flow.session_diagram(records)
+    assert "archive_merge" in md and "profile_stability" in md
+    assert md.count("A_art_1") >= 2  # output of T0 feeds T1
+    assert flow.session_diagram([]).endswith("本会话还没有工具调用\"]\n```")

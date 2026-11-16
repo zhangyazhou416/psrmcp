@@ -58,6 +58,7 @@ An MCP `tools/call` returns:
 Conventions:
 
 - `content`: a Markdown summary, suitable for direct display
+- **Call flow**: every response (success or error) appends a `**调用流程**` section with a Mermaid `flowchart` of the invocation — input artifacts/files → tool (backend + command) → output artifacts (or the error code). The accumulated session graph is readable from the `pulsar://calls` resource
 - `structuredContent`: strictly conforms to the `outputSchema` in this document
 - Images are returned via an `image` block or `resource_link` in `content`
 - On error, `isError: true` and `structuredContent.error` is an `ErrorBody`

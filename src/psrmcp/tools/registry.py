@@ -12,6 +12,7 @@ from typing import Any, Awaitable, Callable
 from mcp.types import CallToolResult, TextContent, Tool, ToolAnnotations
 from pydantic import BaseModel, ValidationError
 
+from .. import flow
 from ..errors import ErrorCode, PsrmcpError, invalid_input
 from ..models.common import AsyncAccepted, JobStatus
 from ._common import AppContext, DEFAULT_PROGRESS, ProgressFn
@@ -67,7 +68,7 @@ class ToolRegistry:
     async def dispatch(self, name: str, arguments: dict[str, Any] | None) -> CallToolResult:
         spec = self._specs.get(name)
         if spec is None:
-            return _error_result(invalid_input(f"unknown tool: {name}"))
+            return self._with_flow(name, arguments, _error_result(invalid_input(f"unknown tool: {name}")))
         try:
             try:
                 tool_input = spec.input_model.model_validate(arguments or {})
@@ -78,23 +79,47 @@ class ToolRegistry:
             # Long-capable tools go async unless execution_mode=sync is forced
             # (TOOLS.md 1.4: auto prefers async for declared long tasks).
             if spec.long_task and str(mode) != "sync":
-                return await self._submit_job(spec, tool_input)
+                out = await self._submit_job(spec, tool_input)
+                return self._with_flow(spec.name, arguments, out)
 
             result = await spec.handler(self.ctx, tool_input, DEFAULT_PROGRESS)
-            return _result_envelope(result)
+            out = _result_envelope(result)
+            return self._with_flow(name, arguments, out)
         except PsrmcpError as exc:
-            return _error_result(exc)
+            return self._with_flow(name, arguments, _error_result(exc))
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             log.exception("tool %s crashed", name)
-            return _error_result(
-                PsrmcpError(
-                    ErrorCode.INTERNAL,
-                    f"{type(exc).__name__}: {exc}",
-                    details={"traceback": traceback.format_exc()[-2000:]},
-                )
+            return self._with_flow(
+                name, arguments,
+                _error_result(
+                    PsrmcpError(
+                        ErrorCode.INTERNAL,
+                        f"{type(exc).__name__}: {exc}",
+                        details={"traceback": traceback.format_exc()[-2000:]},
+                    )
+                ),
             )
+
+    def _with_flow(self, name: str, arguments: dict[str, Any] | None,
+                   out: CallToolResult) -> CallToolResult:
+        """Append the call-flow Mermaid diagram to the response text and
+        record the call in the session journal (best-effort decoration:
+        a diagram bug must never turn a success into an error)."""
+        try:
+            structured = out.structured_content
+            diagram = flow.call_diagram(name, arguments, structured,
+                                        ok=not out.is_error,
+                                        error=structured.get("error"))
+            self.ctx.flow_log.append(flow.record(name, arguments, structured,
+                                                 ok=not out.is_error))
+            text = out.content[0].text if out.content else ""
+            if text:
+                out.content[0].text = text + "\n\n**调用流程**\n\n" + diagram
+        except Exception:  # noqa: BLE001
+            log.debug("flow diagram failed for %s", name, exc_info=True)
+        return out
 
     async def _submit_job(self, spec: ToolSpec, tool_input: Any) -> CallToolResult:
         params = json.loads(tool_input.model_dump_json(exclude={"execution_mode"}))
