@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-import pytest
+import asyncio
 from pathlib import Path
+
+import pytest
 
 from psrmcp.errors import ErrorCode
 from psrmcp.models.common import BackendInfo
@@ -177,23 +179,28 @@ Best signal-to-noise ratio = 154.3
 
 class _ScriptedRunner:
     """Maps binary basename -> (exit, stdout, stderr); optional produce hook
-    materialises expected output files so handlers can find them."""
+    materialises expected output files so handlers can find them. Mirrors
+    ProcessRunner.history so the registry's reproduction block is exercised."""
 
     def __init__(self, responses, produce=None):
         self.responses = responses
         self.calls = []
+        self.history = []
         self._produce = produce
 
     async def run(self, argv, *, cwd=None, env=None, timeout_s=None, cancel=None, stdin_bytes=None):
         from pathlib import Path as _P
 
-        from psrmcp.execution.runner import RunResult
+        from psrmcp.execution.runner import CommandRecord, RunResult
 
         self.calls.append(list(argv))
         name = _P(argv[0]).name
         exit_code, out, err = self.responses.get(name, (0, "", ""))
         if self._produce and exit_code == 0:
             self._produce(name, cwd)
+        self.history.append(CommandRecord(
+            argv=list(argv), cwd=str(cwd) if cwd else None,
+            exit_code=exit_code, duration_s=0.01, env=dict(env) if env else None))
         return RunResult(
             argv=list(argv), exit_code=exit_code,
             stdout=out.encode(), stderr=err.encode(),
@@ -1322,3 +1329,96 @@ async def test_flow_diagram_chains_artifacts(ctx, registry):
     assert "flowchart TD" in md and "artifact_list" in md and "a.tim" in md or \
         "📥" in md
     assert "本会话调用流程" in md
+
+
+async def test_response_carries_reproduction_commands(ctx, registry, tmp_path, monkeypatch):
+    """The exact executed argv reaches the user: profile_measure's response
+    includes the psrstat command line with cd + exit code."""
+    data = _archive_env(ctx, tmp_path)
+    monkeypatch.setattr("psrmcp.tools.profile._psrchive_tool", lambda c, n: f"/fake/{n}")
+    runner = _ScriptedRunner({"psrstat": (0, "obs.ar snr=42.5 w50=5.5", "")})
+    ctx.runner = runner
+
+    out = await registry.dispatch("profile_measure", {
+        "archive": "obs.ar", "metrics": ["snr"], "generate_plot": False})
+    assert out.is_error is False
+    text = out.content[0].text
+    assert "**复现命令**" in text
+    assert "/fake/psrstat -c snr,w50" in text or "/fake/psrstat" in text
+    assert "exit 0" in text
+    # the command runs on the absolute resolved path, no cd needed
+    assert f"/fake/psrstat -c snr {data / 'obs.ar'}" in text
+    # the command text also appears as a 💻 node in the diagram
+    assert "💻 /fake/psrstat" in text
+
+
+async def test_error_response_carries_reproduction_commands(ctx, registry, tmp_path, monkeypatch):
+    """A failed step still reports the commands that ran before the failure —
+    that is what makes the failure reproducible."""
+    data = _archive_env(ctx, tmp_path)
+    monkeypatch.setattr("psrmcp.tools.rmfit._psrchive_tool", lambda c, n: f"/fake/{n}")
+    ctx.runner = _ScriptedRunner({"psrmodel": (0, "", "Error::InvalidState\nincomplete polarization information\n")})
+
+    out = await registry.dispatch("rvm_fit", {"archive": "obs.ar", "execution_mode": "sync"})
+    assert out.is_error is True
+    text = out.content[0].text
+    assert "**复现命令**" in text and "/fake/psrmodel" in text
+    assert "💻 /fake/psrmodel" in text
+
+
+async def test_job_get_reports_job_commands(ctx, registry, tmp_path, monkeypatch):
+    """Async long tasks: the commands are captured while the job runs and
+    surface on job_get once it has finished."""
+    data = _archive_env(ctx, tmp_path)
+    monkeypatch.setattr("psrmcp.tools.profile._psrchive_tool", lambda c, n: f"/fake/{n}")
+
+    def _smooth_produce(name, cwd):
+        if name == "psrsmooth" and cwd:
+            (Path(cwd) / "smooth_src.ar.sm").write_bytes(b"fake")
+
+    ctx.runner = _ScriptedRunner({"psrsmooth": (0, "", "")}, produce=_smooth_produce)
+    out = await registry.dispatch("profile_smooth", {"archive": "obs.ar"})  # auto -> async
+    assert out.is_error is False
+    job_id = out.structured_content["job"]["job_id"]
+    for _ in range(50):  # let the job task run to completion
+        await asyncio.sleep(0.01)
+        if ctx.jobs.get(job_id).status.value in ("completed", "failed"):
+            break
+    assert ctx.jobs.get(job_id).status.value == "completed"
+    assert job_id in ctx.job_commands and ctx.job_commands[job_id]
+
+    out = await registry.dispatch("job_get", {"job_id": job_id})
+    assert out.is_error is False
+    text = out.content[0].text
+    assert "**复现命令**" in text and "/fake/psrsmooth" in text
+
+
+async def test_steps_diagram_describes_each_step(ctx, registry, tmp_path, monkeypatch):
+    """处理流程 is a step-by-step chart: ordinal, tool, what it did (summary)
+    and the key parameters — cumulative across the session."""
+    data = _archive_env(ctx, tmp_path)
+    monkeypatch.setattr("psrmcp.tools.profile._psrchive_tool", lambda c, n: f"/fake/{n}")
+    ctx.runner = _ScriptedRunner({"psrstat": (0, "obs.ar snr=42.5 w50=5.5", "")})
+
+    out = await registry.dispatch("pulsar_environment", {})
+    text = out.content[0].text
+    assert "**处理流程**" in text and "① pulsar_environment" in text
+
+    out = await registry.dispatch("profile_measure", {
+        "archive": "obs.ar", "metrics": ["snr"], "generate_plot": False})
+    text = out.content[0].text
+    assert "② profile_measure" in text
+    # what the step did: the outcome summary from the response
+    assert "S/N = 42.5" in text
+    assert "S0 --> S1" in text          # steps chained in order
+    assert "archive=obs.ar" in text     # key parameter recorded
+
+
+async def test_steps_diagram_marks_failed_step(ctx, registry):
+    """A failed step appears in the sequence with ❌, so the chart shows
+    exactly where processing stopped."""
+    await registry.dispatch("pulsar_environment", {})
+    out = await registry.dispatch("artifact_list", {"kind": "bogus_kind"})
+    text = out.content[0].text
+    assert "**处理流程**" in text
+    assert "② ❌ artifact_list" in text

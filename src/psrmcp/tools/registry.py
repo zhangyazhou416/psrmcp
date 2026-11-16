@@ -67,8 +67,11 @@ class ToolRegistry:
 
     async def dispatch(self, name: str, arguments: dict[str, Any] | None) -> CallToolResult:
         spec = self._specs.get(name)
+        n0 = self._history_len()
         if spec is None:
-            return self._with_flow(name, arguments, _error_result(invalid_input(f"unknown tool: {name}")))
+            return self._with_flow(name, arguments,
+                                   _error_result(invalid_input(f"unknown tool: {name}")),
+                                   commands=self._commands_since(n0))
         try:
             try:
                 tool_input = spec.input_model.model_validate(arguments or {})
@@ -80,13 +83,18 @@ class ToolRegistry:
             # (TOOLS.md 1.4: auto prefers async for declared long tasks).
             if spec.long_task and str(mode) != "sync":
                 out = await self._submit_job(spec, tool_input)
-                return self._with_flow(spec.name, arguments, out)
+                return self._with_flow(spec.name, arguments, out,
+                                       commands=self._commands_since(n0))
 
             result = await spec.handler(self.ctx, tool_input, DEFAULT_PROGRESS)
             out = _result_envelope(result)
-            return self._with_flow(name, arguments, out)
+            return self._with_flow(name, arguments, out,
+                                   commands=self._commands_since(n0))
         except PsrmcpError as exc:
-            return self._with_flow(name, arguments, _error_result(exc))
+            # commands run before the failure are still reported — they are
+            # what the user needs to reproduce the failing step
+            return self._with_flow(name, arguments, _error_result(exc),
+                                   commands=self._commands_since(n0))
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -100,35 +108,77 @@ class ToolRegistry:
                         details={"traceback": traceback.format_exc()[-2000:]},
                     )
                 ),
+                commands=self._commands_since(n0),
             )
 
+    # -- command capture (reproducibility) --------------------------------
+
+    def _history_len(self) -> int:
+        history = getattr(self.ctx.runner, "history", None) or []
+        return len(history)
+
+    def _commands_since(self, n0: int) -> list[dict[str, Any]]:
+        history = getattr(self.ctx.runner, "history", None) or []
+        out: list[dict[str, Any]] = []
+        for h in history[n0:]:
+            argv = list(getattr(h, "argv", []) or [])
+            if "--version" in argv:
+                continue  # backend version probes are not part of the workflow
+            out.append(h.as_dict())
+        return out
+
     def _with_flow(self, name: str, arguments: dict[str, Any] | None,
-                   out: CallToolResult) -> CallToolResult:
-        """Append the call-flow Mermaid diagram to the response text and
-        record the call in the session journal (best-effort decoration:
-        a diagram bug must never turn a success into an error)."""
+                   out: CallToolResult, *, commands: list[dict[str, Any]] | None = None) -> CallToolResult:
+        """Append the call-flow diagram and the reproduction commands to the
+        response text and record the call in the session journal. Best-effort
+        decoration: a reporting bug must never turn a success into an error."""
         try:
             structured = out.structured_content
+            cmds = list(commands or [])
+            # job_get: attach the commands captured when the job ran
+            if name == "job_get" and not cmds:
+                job = structured.get("job") or {}
+                cmds = self.ctx.job_commands.get(job.get("job_id") or "", [])
             diagram = flow.call_diagram(name, arguments, structured,
                                         ok=not out.is_error,
-                                        error=structured.get("error"))
-            self.ctx.flow_log.append(flow.record(name, arguments, structured,
-                                                 ok=not out.is_error))
+                                        error=structured.get("error"),
+                                        commands=cmds)
             text = out.content[0].text if out.content else ""
+            self.ctx.flow_log.append(flow.record(
+                name, arguments, structured, ok=not out.is_error, commands=cmds,
+                summary=flow.first_line(text),
+            ))
             if text:
-                out.content[0].text = text + "\n\n**调用流程**\n\n" + diagram
+                text = text + "\n\n**调用流程**\n\n" + diagram
+                repro = flow.reproduction_block(cmds, self.ctx.ws.root)
+                if repro:
+                    text += "\n\n" + repro
+                # 处理流程: step-by-step view — what each step did, in order
+                steps = flow.steps_diagram(self.ctx.flow_log)
+                if steps:
+                    text += "\n\n**处理流程**\n\n" + steps
+                out.content[0].text = text
         except Exception:  # noqa: BLE001
             log.debug("flow diagram failed for %s", name, exc_info=True)
         return out
 
     async def _submit_job(self, spec: ToolSpec, tool_input: Any) -> CallToolResult:
         params = json.loads(tool_input.model_dump_json(exclude={"execution_mode"}))
+        holder: dict[str, str] = {}
 
         async def run(progress: ProgressFn) -> dict[str, Any]:
-            result = await spec.handler(self.ctx, tool_input, progress)
-            return result.model_dump(mode="json")
+            n0 = self._history_len()
+            try:
+                result = await spec.handler(self.ctx, tool_input, progress)
+                return result.model_dump(mode="json")
+            finally:
+                # job_get picks these up once the job has run (TOOLS.md 1.3)
+                job_id = holder.get("job_id")
+                if job_id:
+                    self.ctx.job_commands[job_id] = self._commands_since(n0)
 
         ref = self.ctx.jobs.submit(spec.name, run, params)
+        holder["job_id"] = ref.job_id
         if ref.status == JobStatus.FAILED:
             # Submit-time validation failure: surface the error directly.
             err = ref.error

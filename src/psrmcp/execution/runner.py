@@ -82,8 +82,37 @@ def _apply_rlimits(max_output_bytes: int | None) -> None:  # pragma: no cover - 
         pass
 
 
+_HISTORY_CAP = 200
+
+
+@dataclass
+class CommandRecord:
+    """One executed command, kept in-process for the per-call reproduction
+    block (TOOLS.md 1.3). Deliberately excludes stdout/stderr bytes."""
+    argv: list[str]
+    cwd: str | None
+    exit_code: int | None
+    duration_s: float
+    env: dict[str, str] | None = None
+    cancelled: bool = False
+
+    def as_dict(self) -> dict:
+        return {
+            "argv": list(self.argv),
+            "cwd": self.cwd,
+            "exit_code": self.exit_code,
+            "duration_s": round(self.duration_s, 3),
+            "env": dict(self.env) if self.env else None,
+            "cancelled": self.cancelled,
+        }
+
+
 class ProcessRunner:
-    """Runs external tools. Never uses a shell; argv arrays only."""
+    """Runs external tools. Never uses a shell; argv arrays only.
+
+    Every execution is appended to `history` (bounded) so the tool registry
+    can report the exact command lines a call ran — the reproducibility
+    contract in TOOLS.md 1.3."""
 
     def __init__(self, *, default_timeout_s: float = _DEFAULT_TIMEOUT_S, max_threads: int | None = None,
                  max_output_bytes: int | None = None, audit_log: Path | None = None) -> None:
@@ -91,6 +120,7 @@ class ProcessRunner:
         self._max_threads = max_threads
         self._max_output_bytes = max_output_bytes
         self._audit_log = audit_log
+        self.history: list[CommandRecord] = []
 
     async def run(
         self,
@@ -148,6 +178,8 @@ class ProcessRunner:
             if cancel is not None:
                 cancel.killed = True
             await self._kill_group(proc, cancel)
+            self._remember(argv, cwd, proc.returncode, time.monotonic() - started, env,
+                           cancelled=True)
             raise
 
         duration = time.monotonic() - started
@@ -159,6 +191,7 @@ class ProcessRunner:
             duration_s=duration,
             timed_out=timed_out,
         )
+        self._remember(argv, cwd, proc.returncode, duration, env)
         self._audit(result, cwd)
         if timed_out:
             raise PsrmcpError(
@@ -188,6 +221,16 @@ class ProcessRunner:
                 continue
         if cancel is not None:
             cancel.killed = True
+
+    def _remember(self, argv: list[str], cwd: Path | None, exit_code: int | None,
+                  duration_s: float, env: dict[str, str] | None,
+                  *, cancelled: bool = False) -> None:
+        self.history.append(CommandRecord(
+            argv=list(argv), cwd=str(cwd) if cwd else None, exit_code=exit_code,
+            duration_s=duration_s, env=dict(env) if env else None, cancelled=cancelled,
+        ))
+        if len(self.history) > _HISTORY_CAP:
+            del self.history[: len(self.history) - _HISTORY_CAP]
 
     def _audit(self, result: RunResult, cwd: Path | None) -> None:
         if self._audit_log is None:

@@ -106,7 +106,7 @@ Missing backends do not crash the server: `pulsar_environment` reports available
 ## Engineering features
 
 - **Artifact provenance**: every result is an `art_xxx` artifact recording sha256 and full provenance (command argv, parameters, backend versions, parent/child lineage); tools chain pipelines together via artifact IDs.
-- **Call-flow diagrams**: every tool response ends with a Mermaid `调用流程` flowchart (inputs → tool/backend/command → outputs, or the error); the session-wide graph is available as the `pulsar://calls` resource, so users can always see how their data was processed.
+- **Call-flow diagrams + reproducible commands**: every tool response ends with a Mermaid `调用流程` flowchart and a `复现命令` block listing the exact shell command lines executed (argv, cwd, env, exit code, duration), so users can reproduce any step by hand; a `处理流程` step-by-step chart shows what each processing step did (tool, outcome summary, key parameters), and the session-wide graphs are available as the `pulsar://calls` resource.
 - **Security sandbox**: path whitelist (rejects `..`/control characters/symlink escapes), commands passed only as argv arrays and never through a shell, rlimits, timeouts that SIGTERM then SIGKILL the process group, stderr tails written to log artifacts.
 - **Structured output**: every tool returns a Markdown summary (content) plus structured JSON (structuredContent); errors use a uniform `code/message/hint/retryable/log_artifact_id` envelope, with no raw traceback exposed.
 - **Plotting**: all plots use Python matplotlib and are delivered as PNG plot artifacts (profiles, residuals, etc.), with no PGPLOT dependency.

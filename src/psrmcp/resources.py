@@ -98,8 +98,11 @@ async def read_resource(ctx: AppContext, uri: str) -> list[TextResourceContents 
         return [TextResourceContents(uri=uri, mimeType=MIME_JSON, text=result.model_dump_json(indent=2))]
 
     if uri == "pulsar://calls":
-        return [TextResourceContents(uri=uri, mimeType=MIME_MD,
-                                     text=flow.session_diagram(ctx.flow_log))]
+        md = flow.session_diagram(ctx.flow_log)
+        steps = flow.steps_diagram(ctx.flow_log)
+        if steps:
+            md += "\n\n## 处理流程（逐步）\n\n" + steps
+        return [TextResourceContents(uri=uri, mimeType=MIME_MD, text=md)]
 
     if parts and parts[0] == "docs":
         topic = parts[1] if len(parts) > 1 else ""

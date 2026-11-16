@@ -83,6 +83,20 @@ def create_server(cfg: Config):
     server = Server(
         SERVER_NAME,
         version=__version__,
+        instructions=(
+            "Every tool response from this server ends with a '**调用流程**' section "
+            "(a Mermaid flowchart of the invocation) and, when shell commands were "
+            "executed, a '**复现命令**' section with the exact command lines (argv, "
+            "working directory, env overrides, exit code, duration) that the user can "
+            "copy and run to reproduce the step. A '**处理流程**' section follows with a "
+            "step-by-step flowchart: ①, ②, ③ ... each step names the tool, what it "
+            "did (outcome summary) and its key parameters, so the user sees what "
+            "happened in each processing step. "
+            "ALWAYS relay ALL these blocks verbatim in your final answer — the "
+            "reproduction commands are the most important part. After chaining several "
+            "tools, also read the pulsar://calls "
+            "resource and include the session-wide diagram."
+        ),
         on_list_tools=on_list_tools,
         on_call_tool=on_call_tool,
         on_list_resources=on_list_resources,

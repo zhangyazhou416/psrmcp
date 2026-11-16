@@ -58,7 +58,7 @@ An MCP `tools/call` returns:
 Conventions:
 
 - `content`: a Markdown summary, suitable for direct display
-- **Call flow**: every response (success or error) appends a `**调用流程**` section with a Mermaid `flowchart` of the invocation — input artifacts/files → tool (backend + command) → output artifacts (or the error code). The accumulated session graph is readable from the `pulsar://calls` resource
+- **Call flow and reproduction**: every response (success or error) appends a `**调用流程**` Mermaid flowchart of the invocation (inputs → tool → executed commands → outputs / error) **and**, whenever backend binaries ran, a `**复现命令**` section listing the exact shell command lines — absolute argv, working directory, env overrides, exit code and duration — so any step can be reproduced by hand. Paths under the workspace tmp dir are staged input copies and are flagged with a substitution note. Async jobs report their commands through `job_get` once finished. A `**处理流程**` section follows with a step-by-step Mermaid flowchart — ①, ②, ③ … — where each step names the tool that ran, what it did (the outcome summary, e.g. "Suggested mask: 11 bad channels"), and its key parameters; failed steps are marked ❌, so the chart shows exactly what each processing step did and where it stopped. The accumulated session graphs (calls and lineage) are readable from the `pulsar://calls` resource
 - `structuredContent`: strictly conforms to the `outputSchema` in this document
 - Images are returned via an `image` block or `resource_link` in `content`
 - On error, `isError: true` and `structuredContent.error` is an `ErrorBody`

@@ -44,6 +44,9 @@ class AppContext:
     # per-session call journal (TOOLS.md 1.3): one entry per dispatch, used
     # by the pulsar://calls session flow diagram
     flow_log: list[dict[str, Any]] = field(default_factory=list)
+    # commands executed inside async jobs, keyed by job_id: job_get reports
+    # them so a finished background job is reproducible too
+    job_commands: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
 
 def make_provenance(

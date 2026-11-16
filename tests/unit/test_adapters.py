@@ -692,11 +692,27 @@ def test_flow_diagram_escaping_and_session():
                      "kind": "archive", "provenance": {"backend": "pam",
                                                        "command": ["pam", "-f", "2"]}},
     }
+    commands = [{"argv": ["/opt/pulsar/bin/pam", "-f", "2", "-e", "tr", "src.ar"],
+                 "cwd": "/ws/tmp/job1", "exit_code": 0, "duration_s": 0.4, "env": None}]
     diagram = flow.call_diagram("archive_transform", {"archive": "obs.ar"},
-                                structured, ok=True)
-    assert "flowchart LR" in diagram and "pam -f 2" in diagram
+                                structured, ok=True, commands=commands)
+    assert "flowchart LR" in diagram and "💻" in diagram
+    assert "/opt/pulsar/bin/pam -f 2" in diagram
     assert "[" not in diagram.split("📥")[1].split("]")[0]  # node text sanitized
     assert "art_x" in diagram and "a(1).ar" in diagram
+
+    # reproduction block: copy-pasteable, with cd + exit code comment
+    repro = flow.reproduction_block(commands, ws_root="/ws")
+    assert "**复现命令**" in repro and "```bash" in repro
+    assert "cd /ws/tmp/job1 && /opt/pulsar/bin/pam -f 2 -e tr src.ar" in repro
+    assert "exit 0" in repro and "输入副本" in repro
+    # env overrides are prefixed
+    env_cmd = [{"argv": ["psrcat", "-o", "short", "J0437-4715"], "cwd": None,
+                "exit_code": 0, "duration_s": 0.1,
+                "env": {"PSRCAT_FILE": "/db/psrcat.db"}}]
+    assert "PSRCAT_FILE=/db/psrcat.db psrcat -o short J0437-4715" in \
+        flow.reproduction_block(env_cmd, ws_root="/ws")
+    assert flow.reproduction_block([], ws_root="/ws") == ""
 
     err = flow.call_diagram("rvm_fit", {"archive": "obs.ar"},
                             {"result_type": "failed",
