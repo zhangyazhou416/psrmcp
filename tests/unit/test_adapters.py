@@ -214,7 +214,9 @@ def test_catalog_query_cmd_contract():
 def test_pam_scrunch_cmd_contract():
     argv = psa.pam_scrunch_cmd("pam", "src.ar", "tr", freq_factor=4, time_factor=2,
                                sum_pols=True, bin_factor=2, remove_baseline=True, centre=True)
-    assert argv[:8] == ["pam", "-F", "4", "-T", "2", "-b", "2", "-p"]
+    # lowercase flags: pam's uppercase -F/-T are boolean "scrunch to one"
+    # flags and would swallow the argument as a positional filename
+    assert argv[:8] == ["pam", "-f", "4", "-t", "2", "-b", "2", "-p"]
     assert argv[8:] == ["-r", "-c", "-e", "tr", "src.ar"]
     # factor 1 / None are no-ops
     argv = psa.pam_scrunch_cmd("pam", "src.ar", "tr", freq_factor=1, time_factor=None)
@@ -608,3 +610,74 @@ def test_psrstat_channels_cmd_and_parse():
     snrs = psa.parse_psrstat_channels(sample)
     assert snrs == [7.465, 15.079, None, None, None, 0.0]
     assert psa.parse_psrstat_channels("") == []
+
+
+def test_psrstat_subints_cmd_and_parse():
+    argv = psa.psrstat_subints_cmd("psrstat", "obs.ar", nsub=4, limit=100)
+    assert argv == ["psrstat", "-Q", "-l", "subint=0-3",
+                    "-c", "snr,nbin,nchan,freq", "obs.ar"]
+    # limit truncates the loop range
+    assert psa.psrstat_subints_cmd("psrstat", "obs.ar", nsub=40, limit=10)[3] == "subint=0-9"
+    sample = (
+        "two.ar subint=0 7.465 1024 128 1412\n"
+        "two.ar subint=1 - 1024 128 1412.5\n"
+    )
+    rows = psa.parse_psrstat_subints(sample)
+    assert rows[0] == {"index": 0, "snr": 7.465, "nbin": 1024, "nchan": 128,
+                       "freq_mhz": 1412}
+    assert rows[1]["snr"] is None and rows[1]["freq_mhz"] == 1412.5
+    assert psa.parse_psrstat_subints("") == []
+
+
+def test_psrplot_cmd_contract():
+    assert psa.psrplot_cmd("psrplot", "obs.ar", "/tmp/x.png", "profile") == \
+        ["psrplot", "-D", "/tmp/x.png/PNG", "-p", "flux", "obs.ar"]
+    assert psa.psrplot_cmd("psrplot", "obs.ar", "/tmp/x.png", "phase_frequency") == \
+        ["psrplot", "-D", "/tmp/x.png/PNG", "-p", "freq", "obs.ar"]
+    with pytest.raises(ValueError):
+        psa.psrplot_cmd("psrplot", "obs.ar", "/tmp/x.png", "bogus")
+
+
+def test_pat_cmd_with_snr_attribute():
+    argv = psa.pat_cmd("pat", "obs.ar", "std.ar", attributes=["snr"])
+    assert "-C" in argv and argv[argv.index("-C") + 1] == "snr"
+    assert psa.pat_cmd("pat", "obs.ar", "std.ar") == \
+        ["pat", "-f", "tempo2", "-A", "PGS", "-s", "std.ar", "obs.ar"]
+
+
+def test_psrstability_cmd_contract():
+    argv = psa.psrstability_cmd("psrstability", ["a.ar", "b.ar", "c.ar"],
+                                 turns=2, out_dir="/tmp/out",
+                                 form_invariant=True, preserve_time_resolution=True)
+    assert argv == ["psrstability", "-t", "2", "-i", "-F", "-O", "/tmp/out",
+                    "a.ar", "b.ar", "c.ar"]
+    argv = psa.psrstability_cmd("psrstability", ["a.ar"], turns=1, out_dir="o")
+    assert argv == ["psrstability", "-t", "1", "-O", "o", "a.ar"]
+
+
+def test_psrpca_and_psrflux_cmd_contract():
+    assert psa.psrpca_cmd("psrpca", "obs.ar", "std.ar") == \
+        ["psrpca", "-s", "std.ar", "-p", "pca", "obs.ar"]
+    assert psa.psrflux_ds_cmd("psrflux", "obs.ar", "std.ar") == \
+        ["psrflux", "-s", "std.ar", "obs.ar"]
+    assert psa.psrflux_ds_cmd("psrflux", "obs.ar", "std.ar", align="per_profile") == \
+        ["psrflux", "-s", "std.ar", "-a", "obs.ar"]
+    assert psa.psrflux_ds_cmd("psrflux", "obs.ar", "std.ar", align="none") == \
+        ["psrflux", "-s", "std.ar", "-A", "obs.ar"]
+
+
+def test_parse_psrflux_ds():
+    sample = (
+        "# Dynamic spectrum computed by psrflux\n"
+        "# MJD0: 60190.506261\n"
+        "# Flux method: StandardFlux\n"
+        "# isub ichan time(min) freq(MHz) flux flux_err\n"
+        "   0    0     0.24  1475.5  +2.6e+02 +1.7e+00\n"
+        "   1    0     0.48  1475.5  +2.5e+02 +1.8e+00\n"
+        "garbage\n"
+    )
+    d = psa.parse_psrflux_ds(sample)
+    assert d["n_rows"] == 2
+    assert d["n_subints"] == 2 and d["n_channels"] == 1
+    assert d["mjd0"] == pytest.approx(60190.506261)
+    assert d["flux_method"] == "StandardFlux"

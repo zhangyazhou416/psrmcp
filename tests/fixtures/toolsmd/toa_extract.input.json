@@ -49,6 +49,11 @@
       "minimum": 0,
       "default": 0
     },
+    "include_snr": {
+      "type": "boolean",
+      "default": false,
+      "description": "Ask pat to report each TOA's S/N (-C snr, appended as a -snr flag in tempo2 format); min_snr then filters on the measured S/N"
+    },
     "output_name": {
       "type": "string",
       "maxLength": 128

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pathlib import Path
 
 from psrmcp.errors import ErrorCode
 from psrmcp.models.common import BackendInfo
@@ -232,7 +233,7 @@ async def test_archive_transform_success(ctx, registry, tmp_path, monkeypatch):
     assert data_out["dimensions"]["nchan"] == 64
     assert data_out["warnings"] == []
     pam_argv = [c for c in runner.calls if c[0] == "/fake/pam"][0]
-    assert pam_argv[:7] == ["/fake/pam", "-F", "4", "-T", "2", "-b", "2"]
+    assert pam_argv[:7] == ["/fake/pam", "-f", "4", "-t", "2", "-b", "2"]
     assert "-p" in pam_argv and "-r" in pam_argv
 
 
@@ -1102,3 +1103,182 @@ async def test_rfi_scan_snr_mad_flagging(ctx, registry, tmp_path, monkeypatch):
         "rfi_scan", {"archive": "obs.ar", "method": "bandpass", "generate_plot": False})
     assert out.is_error is True
     assert "bandpass" in out.structured_content["error"]["message"]
+
+
+async def test_toa_include_snr_flag_and_filter(ctx, registry, tmp_path, monkeypatch):
+    """include_snr adds pat -C snr; the parser extracts the -snr flag and
+    min_snr filters on the measured S/N."""
+    data = _archive_env(ctx, tmp_path)
+    (data / "std.ar").write_bytes(b"fake")
+    monkeypatch.setattr("psrmcp.tools.timing._psrchive_tool", lambda c, n: f"/fake/{n}")
+
+    toa_line = (" 0001.000 0001.000  56000.123456789  0.00012 1400.000  "
+                " -snr 33.5 -x 0.02")
+    runner = _ScriptedRunner({"pat": (0, "FORMAT 1\n" + toa_line + "\n", "")})
+    ctx.runner = runner
+
+    out = await registry.dispatch("toa_extract", {
+        "archive": "obs.ar", "standard_profile": "std.ar",
+        "include_snr": True, "min_snr": 30.0, "execution_mode": "sync"})
+    assert out.is_error is False, out.structured_content
+    body = out.structured_content
+    assert body["n_toas"] == 1
+    assert body["snr"]["min"] == pytest.approx(33.5)
+    argv = [c for c in runner.calls if c[0] == "/fake/pat"][0]
+    assert argv[argv.index("-C") + 1] == "snr"
+
+    # min_snr above the measured value drops the TOA
+    out = await registry.dispatch("toa_extract", {
+        "archive": "obs.ar", "standard_profile": "std.ar",
+        "include_snr": True, "min_snr": 40.0, "execution_mode": "sync"})
+    assert out.is_error is False
+    assert out.structured_content["n_toas"] == 0
+
+
+async def test_profile_measure_psrplot_png(ctx, registry, tmp_path, monkeypatch):
+    """profile_measure renders its plot via psrplot's headless PNG device."""
+    data = _archive_env(ctx, tmp_path)
+    monkeypatch.setattr("psrmcp.tools.profile._psrchive_tool", lambda c, n: f"/fake/{n}")
+
+    def _png_produce(name, cwd):
+        if name == "psrplot" and cwd:
+            (cwd / "profile.png").write_bytes(b"\x89PNG fake")
+
+    runner = _ScriptedRunner({"psrstat": (0, "obs.ar snr=42.5 w50=5.5", ""),
+                              "psrplot": (0, "", "")}, produce=_png_produce)
+    ctx.runner = runner
+
+    out = await registry.dispatch("profile_measure", {
+        "archive": "obs.ar", "metrics": ["snr", "width"], "generate_plot": True})
+    assert out.is_error is False, out.structured_content
+    body = out.structured_content
+    assert body["plot_artifact"].startswith("art_")
+    argv = [c for c in runner.calls if c[0] == "/fake/psrplot"][0]
+    assert argv[argv.index("-p") + 1] == "flux"
+    assert argv[argv.index("-D") + 1].endswith("/PNG")
+
+    # psrplot failing degrades to a warning, not an error
+    runner.responses["psrplot"] = (1, "", "boom")
+    out = await registry.dispatch("profile_measure", {
+        "archive": "obs.ar", "metrics": ["snr"], "generate_plot": True})
+    assert out.is_error is False
+    codes = [w["code"] for w in out.structured_content["warnings"]]
+    assert "W_PLOT_UNAVAILABLE" in codes
+
+
+async def test_archive_inspect_integrations_rows(ctx, registry, tmp_path, monkeypatch):
+    """include_integrations now returns real per-subint rows via psrstat's
+    subint loop."""
+    data = _archive_env(ctx, tmp_path)
+    monkeypatch.setattr("psrmcp.tools.archive._tool", lambda c, n: f"/fake/{n}")
+    sub_rows = "".join(
+        f"obs.ar subint={i} {10.0 + i} 1024 128 1412\n" for i in range(16)
+    )
+    runner = _ScriptedRunner({"vap": (0, _VAP_DIMS, ""), "psrstat": (0, sub_rows, "")})
+    ctx.runner = runner
+
+    out = await registry.dispatch("archive_inspect", {
+        "archive": "obs.ar", "include_integrations": True})
+    assert out.is_error is False, out.structured_content
+    body = out.structured_content
+    rows = body["integrations"]
+    assert rows and rows[0]["index"] == 0 and rows[0]["snr"] == pytest.approx(10.0)
+    assert rows[-1]["index"] == 15 and rows[-1]["freq_mhz"] == 1412
+    argv = [c for c in runner.calls if c[0] == "/fake/psrstat"][0]
+    assert "subint=0-15" in argv
+
+
+async def test_profile_stability_emits_expected_profiles(ctx, registry, tmp_path, monkeypatch):
+    data = _archive_env(ctx, tmp_path)
+    for i in range(4):
+        (data / f"c{i}.ar").write_bytes(b"fake")
+    monkeypatch.setattr("psrmcp.tools.profile._psrchive_tool", lambda c, n: f"/fake/{n}")
+
+    def _stab_produce(name, cwd):
+        if name == "psrstability" and cwd:
+            out = Path(cwd) / "out"
+            out.mkdir(exist_ok=True)
+            (out / "profile_0.ar").write_bytes(b"fake")
+            (out / "profile_1.ar").write_bytes(b"fake")
+
+    runner = _ScriptedRunner({"psrstability": (0, "", "")}, produce=_stab_produce)
+    ctx.runner = runner
+
+    out = await registry.dispatch("profile_stability", {
+        "archives": ["c0.ar", "c1.ar", "c2.ar", "c3.ar"], "turns": 2,
+        "execution_mode": "sync"})
+    assert out.is_error is False, out.structured_content
+    body = out.structured_content
+    assert body["n_profiles"] == 2
+    assert all(a["artifact_id"].startswith("art_") for a in body["profiles"])
+    argv = [c for c in runner.calls if c[0] == "/fake/psrstability"][0]
+    assert argv[:3] == ["/fake/psrstability", "-t", "2"]
+    assert "-O" in argv and sum("chunk" in a for a in argv) == 4
+
+    # turns >= n_archives -> no outputs -> E_PROCESS_FAILED
+    ctx.runner = _ScriptedRunner({"psrstability": (0, "", "")})  # produce nothing
+    out = await registry.dispatch("profile_stability", {
+        "archives": ["c0.ar", "c1.ar"], "turns": 5, "execution_mode": "sync"})
+    assert out.is_error is True
+    assert out.structured_content["error"]["code"] == ErrorCode.PROCESS_FAILED.value
+
+
+async def test_profile_pca_commits_products(ctx, registry, tmp_path, monkeypatch):
+    data = _archive_env(ctx, tmp_path)
+    (data / "std.ar").write_bytes(b"fake")
+    monkeypatch.setattr("psrmcp.tools.profile._psrchive_tool", lambda c, n: f"/fake/{n}")
+
+    def _pca_produce(name, cwd):
+        if name == "psrpca" and cwd:
+            (Path(cwd) / "pca_diffs.ar").write_bytes(b"fake")
+            (Path(cwd) / "pca_evecs.ar").write_bytes(b"fake")
+            (Path(cwd) / "pca_evals.dat").write_text("1.0\n0.5\n")
+
+    runner = _ScriptedRunner({"psrpca": (0, "", "")}, produce=_pca_produce)
+    ctx.runner = runner
+
+    out = await registry.dispatch("profile_pca", {
+        "archive": "obs.ar", "standard_profile": "std.ar", "execution_mode": "sync"})
+    assert out.is_error is False, out.structured_content
+    body = out.structured_content
+    assert body["diffs_archive"]["artifact_id"].startswith("art_")
+    assert body["evecs_archive"]["artifact_id"].startswith("art_")
+    assert body["eigenvalues_artifact"].startswith("art_")
+    argv = [c for c in runner.calls if c[0] == "/fake/psrpca"][0]
+    assert argv[argv.index("-s") + 1].endswith("pca_std.ar")
+    assert "-p" in argv and argv[argv.index("-p") + 1] == "pca"
+
+
+async def test_dynamic_spectra_commits_table(ctx, registry, tmp_path, monkeypatch):
+    data = _archive_env(ctx, tmp_path)
+    (data / "std.ar").write_bytes(b"fake")
+    monkeypatch.setattr("psrmcp.tools.singlepulse._psrchive_tool", lambda c, n: f"/fake/{n}")
+
+    def _ds_produce(name, cwd):
+        if name == "psrflux" and cwd:
+            (Path(cwd) / "ds_src.ar.ds").write_text(
+                "# Dynamic spectrum computed by psrflux\n"
+                "# MJD0: 60190.5\n# Flux method: StandardFlux\n"
+                "   0    0   0.24 1475.5 +2.6e2 +1.7e0\n"
+                "   1    0   0.48 1475.5 +2.5e2 +1.8e0\n")
+
+    runner = _ScriptedRunner({"psrflux": (0, "", "")}, produce=_ds_produce)
+    ctx.runner = runner
+
+    out = await registry.dispatch("dynamic_spectra", {
+        "archive": "obs.ar", "standard_profile": "std.ar",
+        "align": "per_profile", "execution_mode": "sync"})
+    assert out.is_error is False, out.structured_content
+    body = out.structured_content
+    assert body["ds_artifact"]["artifact_id"].startswith("art_")
+    assert body["n_rows"] == 2 and body["n_subints"] == 2
+    assert body["flux_method"] == "StandardFlux"
+    argv = [c for c in runner.calls if c[0] == "/fake/psrflux"][0]
+    assert "-a" in argv
+
+    # missing .ds output -> E_PROCESS_FAILED
+    ctx.runner = _ScriptedRunner({"psrflux": (0, "", "")})
+    out = await registry.dispatch("dynamic_spectra", {
+        "archive": "obs.ar", "standard_profile": "std.ar", "execution_mode": "sync"})
+    assert out.is_error is True
+    assert out.structured_content["error"]["code"] == ErrorCode.PROCESS_FAILED.value

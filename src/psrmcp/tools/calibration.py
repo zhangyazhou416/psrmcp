@@ -1,4 +1,4 @@
-"""Calibration tools (TOOLS.md 5.24/5.25): pac polarization_calibrate + calibrator_database."""
+"""Calibration tools (TOOLS.md 5.27/5.28): pac polarization_calibrate + calibrator_database."""
 
 from __future__ import annotations
 

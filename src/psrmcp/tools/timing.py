@@ -1,4 +1,4 @@
-"""toa_extract / timing_fit / timing_diagnose (TOOLS.md 5.26-5.28)."""
+"""toa_extract / timing_fit / timing_diagnose (TOOLS.md 5.29-5.31)."""
 
 from __future__ import annotations
 
@@ -87,7 +87,14 @@ def _parse_toa_lines(text: str) -> list[dict]:
         stripped = line.strip()
         if not stripped or stripped.startswith(("FORMAT", "#", "MODE")):
             continue
-        mjd = freq = amp = None
+        mjd = freq = amp = snr = None
+        # pat -C snr appends "-snr <value>" to the tempo2 flag tail
+        snr_match = re.search(r"(?:^|\s)-snr\s+([-\d.eE+]+)(?:\s|$)", stripped)
+        if snr_match:
+            try:
+                snr = float(snr_match.group(1))
+            except ValueError:
+                snr = None
         for tok in _TOA_SPLIT.split(stripped):
             try:
                 v = float(tok)
@@ -105,7 +112,8 @@ def _parse_toa_lines(text: str) -> list[dict]:
             if amp is None and 0.0 < v < 1e5:
                 amp = v
         if mjd is not None:
-            toas.append({"mjd": mjd, "freq_mhz": freq, "amp": amp, "raw": stripped})
+            toas.append({"mjd": mjd, "freq_mhz": freq, "amp": amp, "snr": snr,
+                         "raw": stripped})
     return toas
 
 
@@ -121,9 +129,10 @@ def _filter_toas(toas: list[dict], inp: ToaExtractInput) -> list[dict]:
         ):
             continue
         if inp.min_snr > 0:
-            # TODO(contract): pat TOA columns do not carry SNR directly; only
-            # apply the floor when an amp-like column was confidently parsed.
-            if t["amp"] is None or t["amp"] < inp.min_snr:
+            # with include_snr the real pat-reported S/N is available; the
+            # amp-like column is only a heuristic fallback
+            measured = t.get("snr") or t.get("amp")
+            if measured is None or measured < inp.min_snr:
                 continue
         kept.append(t)
     return kept
@@ -139,7 +148,8 @@ async def _toa(ctx: AppContext, inp: ToaExtractInput, progress) -> ToaExtractRes
 
     from ..adapters.psrchive import pat_cmd
 
-    argv = pat_cmd(binary, str(resolved.resolved), str(std.resolved), algorithm=inp.algorithm)
+    argv = pat_cmd(binary, str(resolved.resolved), str(std.resolved), algorithm=inp.algorithm,
+                   attributes=["snr"] if inp.include_snr else None)
     progress("extracting", 0.2)
     job_tmp = ctx.ws.new_job_tmp(f"pat_{int(time.time() * 1000)}")
     run = await ctx.runner.run(
@@ -176,7 +186,8 @@ async def _toa(ctx: AppContext, inp: ToaExtractInput, progress) -> ToaExtractRes
         provenance=prov,
         parents=[p for p in (resolved.artifact_id, std.artifact_id) if p],
     )
-    amps = sorted(t["amp"] for t in toas if t["amp"] is not None)
+    amps = sorted(t["snr"] if t["snr"] is not None else t["amp"]
+                  for t in toas if (t["snr"] is not None or t["amp"] is not None))
     snr_stats = (
         ToaSnrStats(min=amps[0], median=amps[len(amps) // 2], max=amps[-1]) if amps else None
     )

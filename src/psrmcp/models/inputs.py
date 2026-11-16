@@ -1,4 +1,4 @@
-"""Input models for all 33 tools (TOOLS.md section 5 schemas, 1:1).
+"""Input models for all 36 tools (TOOLS.md section 5 schemas, 1:1).
 
 All models forbid extra properties, mirroring `additionalProperties: false`.
 """
@@ -469,6 +469,55 @@ class CalibratorDatabaseInput(BaseModel):
     execution_mode: ExecutionMode = ExecutionMode.AUTO
 
 
+class ProfileStabilityInput(BaseModel):
+    """Profile stability study with psrstability: `archives` are per-sub-int
+    chunk archives (e.g. produced by archive_split with per_subint=1); the
+    first `turns` chunks are aggregated into a running mean, and every
+    further chunk then emits one averaged-profile artifact — so
+    n_profiles = n_archives - turns. `form_invariant` builds the invariant
+    (Stokes-invariant) profile, `preserve_time_resolution` skips the final
+    tscrunch."""
+
+    model_config = FORBID
+    archives: list[str] = Field(min_length=1, max_length=128)
+    root: str | None = None
+    turns: int = Field(default=10, ge=1)
+    form_invariant: bool = False
+    preserve_time_resolution: bool = False
+    output_name: str | None = Field(default=None, max_length=128)
+    execution_mode: ExecutionMode = ExecutionMode.AUTO
+
+
+class ProfilePcaInput(BaseModel):
+    """Principal-component analysis of sub-integration profile differences
+    with psrpca: the archive is matched against `standard_profile`, the
+    difference profiles are decomposed, and the products (difference
+    archive, eigenvector archive, eigenvalues/decomposition/covariance
+    tables) are committed as artifacts."""
+
+    model_config = FORBID
+    archive: str
+    standard_profile: str
+    root: str | None = None
+    execution_mode: ExecutionMode = ExecutionMode.AUTO
+
+
+class DynamicSpectraInput(BaseModel):
+    """Per-pulse flux dynamic spectrum with psrflux: each sub-integration is
+    matched against `standard_profile` and its per-channel flux density is
+    written as an ASCII table (isub, ichan, time, freq, flux, flux_err).
+    `align` selects whether the standard is aligned to each profile
+    separately (`per_profile`) or not fitted at all (`none`)."""
+
+    model_config = FORBID
+    archive: str
+    standard_profile: str
+    root: str | None = None
+    align: Literal["default", "per_profile", "none"] = "default"
+    output_name: str | None = Field(default=None, max_length=128)
+    execution_mode: ExecutionMode = ExecutionMode.AUTO
+
+
 class ArchiveSplitInput(BaseModel):
     """Split an archive into multiple archive artifacts with psrsplit:
     `per_subint` (-n) groups sub-integrations per output file, `per_channel`
@@ -579,6 +628,7 @@ class ToaExtractInput(BaseModel):
     mjd_range: list[float] | None = Field(default=None, min_length=2, max_length=2)
     freq_range_mhz: list[float] | None = Field(default=None, min_length=2, max_length=2)
     min_snr: float = Field(default=0, ge=0)
+    include_snr: bool = False
     output_name: str | None = Field(default=None, max_length=128)
     execution_mode: ExecutionMode = ExecutionMode.AUTO
 

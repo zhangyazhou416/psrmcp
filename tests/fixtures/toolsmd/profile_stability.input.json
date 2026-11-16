@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/profile_stability.input.json",
+  "type": "object",
+  "required": [
+    "archives"
+  ],
+  "properties": {
+    "archives": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "maxItems": 128,
+      "description": "Per-sub-integration chunk archives (e.g. from archive_split with per_subint=1); n_profiles = n_archives - turns"
+    },
+    "root": {
+      "type": "string"
+    },
+    "turns": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 10,
+      "description": "Chunks aggregated into the running mean before averaged profiles start being emitted (-t)"
+    },
+    "form_invariant": {
+      "type": "boolean",
+      "default": false,
+      "description": "Form the invariant (Stokes-invariant) profile (-i)"
+    },
+    "preserve_time_resolution": {
+      "type": "boolean",
+      "default": false,
+      "description": "Do not tscrunch the averaged profiles (-F)"
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}

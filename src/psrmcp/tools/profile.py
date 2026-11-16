@@ -1,4 +1,5 @@
-"""profile_standardize / profile_measure / profile_optimize / profile_smooth (TOOLS.md 5.17-5.20)."""
+"""profile_standardize / profile_measure / profile_optimize / profile_smooth /
+profile_stability / profile_pca (TOOLS.md 5.17-5.22)."""
 
 from __future__ import annotations
 
@@ -15,14 +16,18 @@ from ..models.common import ArtifactKind, WarningInfo
 from ..models.inputs import (
     ProfileMeasureInput,
     ProfileOptimizeInput,
+    ProfilePcaInput,
     ProfileSmoothInput,
+    ProfileStabilityInput,
     ProfileStandardizeInput,
 )
 from ..models.results import (
     MeasureMetrics,
     ProfileMeasureResult,
     ProfileOptimizeResult,
+    ProfilePcaResult,
     ProfileSmoothResult,
+    ProfileStabilityResult,
     ProfileStandardizeResult,
     WidthInfo,
 )
@@ -61,6 +66,22 @@ def register(reg: ToolRegistry) -> None:
         input_model=ProfileSmoothInput,
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False),
         handler=_smooth,
+        long_task=True,
+    ))
+    reg.add(ToolSpec(
+        name="profile_stability",
+        description="Profile stability study (psrstability): archives are per-sub-integration chunks (e.g. from archive_split with per_subint=1); the first `turns` chunks form the running mean and every further chunk emits one averaged-profile artifact (n_profiles = n_archives - turns). Long task; supports async and cancellation.",
+        input_model=ProfileStabilityInput,
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False),
+        handler=_stability,
+        long_task=True,
+    ))
+    reg.add(ToolSpec(
+        name="profile_pca",
+        description="Principal-component analysis of sub-integration profile differences (psrpca) against a standard profile: difference-profile and eigenvector archives, eigenvalues/decomposition/covariance tables. The archive needs multiple sub-integrations. Long task; supports async and cancellation.",
+        input_model=ProfilePcaInput,
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False),
+        handler=_pca,
         long_task=True,
     ))
 
@@ -214,7 +235,7 @@ async def _measure(ctx: AppContext, inp: ProfileMeasureInput, progress) -> Profi
 
     plot_artifact = None
     if inp.generate_plot:
-        plot_artifact = _plot_profile(ctx, resolved.resolved, inp.plot_type, warnings)
+        plot_artifact = await _plot_profile(ctx, resolved.resolved, inp.plot_type, psr_info.version, warnings)
 
     prov = make_provenance(
         tool="profile_measure",
@@ -232,15 +253,52 @@ async def _measure(ctx: AppContext, inp: ProfileMeasureInput, progress) -> Profi
     )
 
 
-def _plot_profile(ctx: AppContext, path, plot_type: str, warnings: list[WarningInfo]) -> str | None:
-    # TODO(contract): psrplot ascii export + parser gets backfilled with the
-    # toolchain; until then profile plots degrade to a warning.
+async def _plot_profile(ctx: AppContext, path, plot_type: str, backend_version: str | None,
+                        warnings: list[WarningInfo]) -> str | None:
+    """Render the archive with psrplot's headless PNG device (-D <path>/PNG;
+    contract verified 2026-11-15). PGPLOT file devices need no display, so
+    this stays server-safe; computed charts (residuals, masks) keep using
+    matplotlib. Degrades to a warning when rendering fails."""
+    import time as _time
+
+    from ..execution.workspace import utcnow as _now
+
     try:
-        raise RuntimeError("psrplot ascii output parsing awaits contract-test backfill")
-    except Exception as exc:
+        binary = _psrchive_tool(ctx, "psrplot")
+        job_tmp = ctx.ws.new_job_tmp(f"psrplot_{_time.time_ns()}")
+        png_path = job_tmp / "profile.png"
+        argv = psa.psrplot_cmd(binary, str(path), str(png_path), plot_type)
+        run = await ctx.runner.run(argv, cwd=job_tmp, timeout_s=300.0)
+        if run.exit_code != 0 or not png_path.exists():
+            raise RuntimeError(
+                f"psrplot exit={run.exit_code}: {run.stderr_tail(200) or 'no PNG produced'}")
+        ref = ctx.store.commit(
+            src_path=png_path,
+            filename="profile.png",
+            kind=ArtifactKind.PLOT,
+            format_name="png",
+            provenance=make_provenance(
+                tool="profile_measure",
+                backend="psrplot",
+                backend_version=backend_version,
+                params={"plot_type": plot_type},
+                started=_now(),
+                duration_s=0.0,
+                command=argv,
+            ),
+        )
+        return ref.artifact_id
+    except PsrmcpError as exc:
         warnings.append(WarningInfo(
             code="W_PLOT_UNAVAILABLE",
-            message=f"profile plots are unavailable ({exc}); timing/RFI plots are unaffected",
+            message=f"profile plot unavailable: {exc.message}",
+            severity="info",
+        ))
+        return None
+    except Exception as exc:  # noqa: BLE001 — plotting must not fail the tool
+        warnings.append(WarningInfo(
+            code="W_PLOT_UNAVAILABLE",
+            message=f"profile plot unavailable: {exc}",
             severity="info",
         ))
         return None
@@ -357,3 +415,160 @@ async def _smooth(ctx: AppContext, inp: ProfileSmoothInput, progress) -> Profile
     )
     progress("complete", 1.0)
     return ProfileSmoothResult(smoothed_archive=smoothed, method=inp.method)
+
+
+async def _stability(ctx: AppContext, inp, progress):
+    started = utcnow()
+    t0 = time.monotonic()
+    psr_info = await ctx.backends.require("psrchive")
+    binary = _psrchive_tool(ctx, "psrstability")
+
+    # psrstability aggregates one running mean per input FILE: stage every
+    # chunk under a plain sequential name inside the job tmp
+    job_tmp = ctx.ws.new_job_tmp(f"stab_{time.time_ns()}")
+    out_dir = job_tmp / "out"
+    out_dir.mkdir()
+    staged: list[str] = []
+    parents: list[str] = []
+    for i, ref in enumerate(inp.archives):
+        r = ctx.resolver.resolve(ref, root=inp.root, what="archive")
+        local = job_tmp / f"chunk{i:04d}.ar"
+        shutil.copy2(r.resolved, local)
+        staged.append(str(local))
+        if r.artifact_id:
+            parents.append(r.artifact_id)
+
+    argv = psa.psrstability_cmd(
+        binary, staged, turns=inp.turns, out_dir=str(out_dir),
+        form_invariant=inp.form_invariant,
+        preserve_time_resolution=inp.preserve_time_resolution,
+    )
+    progress("accumulating", 0.4)
+    run = await ctx.runner.run(
+        argv, cwd=job_tmp, timeout_s=ctx.cfg.server.job_timeout_s, cancel=CancelHook()
+    )
+    chunks = sorted(out_dir.glob("profile_*.ar"))
+    if run.exit_code != 0 or not chunks:
+        expected = max(len(staged) - inp.turns, 0)
+        log_id = log_artifact_from_stderr(ctx, job_key="stab", stderr=run.stderr_tail(), argv=argv)
+        raise PsrmcpError(
+            ErrorCode.PROCESS_FAILED,
+            f"psrstability produced no averaged profiles "
+            f"(expected {expected} from {len(staged)} chunks with turns="
+            f"{inp.turns}; exit code {run.exit_code}): {run.stderr_tail(300)}",
+            hint="n_profiles = n_archives - turns; provide more chunks than turns",
+            log_artifact_id=log_id,
+        )
+
+    prov = make_provenance(
+        tool="profile_stability",
+        backend="psrstability",
+        backend_version=psr_info.version,
+        params=inp.model_dump(mode="json"),
+        started=started,
+        duration_s=time.monotonic() - t0,
+        command=argv,
+    )
+    prefix = inp.output_name or "stable"
+    profiles = [
+        ctx.store.commit(
+            src_path=chunk,
+            filename=f"{prefix}.{chunk.stem}.ar",
+            kind=ArtifactKind.ARCHIVE,
+            format_name="PSRARCHIVE",
+            provenance=prov,
+            parents=parents or None,
+        )
+        for chunk in chunks
+    ]
+    progress("complete", 1.0)
+    return ProfileStabilityResult(
+        profiles=profiles, n_profiles=len(profiles), turns=inp.turns,
+    )
+
+
+_PCA_SUFFIX_KINDS = {
+    "_diffs.ar": "archive", "_evecs.ar": "archive", "_rotated_scaled.ar": "archive",
+    "_evals.dat": "text", "_decomposition.dat": "text",
+    "_covariance.dat": "text", "_profiles.dat": "text",
+}
+
+
+async def _pca(ctx: AppContext, inp, progress):
+    started = utcnow()
+    t0 = time.monotonic()
+    psr_info = await ctx.backends.require("psrchive")
+    binary = _psrchive_tool(ctx, "psrpca")
+    resolved = ctx.resolver.resolve(inp.archive, root=inp.root, what="archive")
+    std = ctx.resolver.resolve(inp.standard_profile, root=inp.root, what="standard profile")
+
+    # psrpca writes <prefix>_* files into the process cwd; run on a staged copy
+    job_tmp = ctx.ws.new_job_tmp(f"pca_{time.time_ns()}")
+    local_src = job_tmp / "pca_src.ar"
+    shutil.copy2(resolved.resolved, local_src)
+    local_std = job_tmp / "pca_std.ar"
+    shutil.copy2(std.resolved, local_std)
+
+    argv = psa.psrpca_cmd(binary, str(local_src), str(local_std))
+    progress("decomposing", 0.4)
+    run = await ctx.runner.run(
+        argv, cwd=job_tmp, timeout_s=ctx.cfg.server.job_timeout_s, cancel=CancelHook()
+    )
+    produced = sorted(job_tmp.glob("pca_*"))
+    # pca_src.ar / pca_std.ar are our staged copies, not products
+    produced = [p for p in produced if p.name not in ("pca_src.ar", "pca_std.ar")]
+    if run.exit_code != 0 or not produced:
+        log_id = log_artifact_from_stderr(ctx, job_key="pca2", stderr=run.stderr_tail(), argv=argv)
+        raise PsrmcpError(
+            ErrorCode.PROCESS_FAILED,
+            f"psrpca produced no output (exit code {run.exit_code}): {run.stderr_tail(300)}",
+            log_artifact_id=log_id,
+        )
+
+    prov = make_provenance(
+        tool="profile_pca",
+        backend="psrpca",
+        backend_version=psr_info.version,
+        params=inp.model_dump(mode="json"),
+        started=started,
+        duration_s=time.monotonic() - t0,
+        command=argv,
+    )
+    parents = [p for p in (resolved.artifact_id, std.artifact_id) if p]
+
+    result = ProfilePcaResult()
+    for path in produced:
+        suffix = path.name[len("pca"):]
+        kind = _PCA_SUFFIX_KINDS.get(suffix, "text")
+        is_archive = kind == "archive"
+        ref = ctx.store.commit(
+            src_path=path,
+            filename=path.name,
+            kind=ArtifactKind.ARCHIVE if is_archive else ArtifactKind.OTHER,
+            format_name="PSRARCHIVE" if is_archive else "text",
+            provenance=prov,
+            parents=parents or None,
+        )
+        if suffix == "_diffs.ar":
+            result.diffs_archive = ref
+        elif suffix == "_evecs.ar":
+            result.evecs_archive = ref
+        elif suffix == "_rotated_scaled.ar":
+            result.rotated_scaled_archive = ref
+        elif suffix == "_evals.dat":
+            result.eigenvalues_artifact = ref.artifact_id
+        elif suffix == "_decomposition.dat":
+            result.decomposition_artifact = ref.artifact_id
+        elif suffix == "_covariance.dat":
+            result.covariance_artifact = ref.artifact_id
+        elif suffix == "_profiles.dat":
+            result.profiles_artifact = ref.artifact_id
+    if result.diffs_archive is None:
+        result.warnings.append(WarningInfo(
+            code="W_PCA_NO_DIFFS",
+            message="psrpca produced no difference-profile archive; "
+                    "check that the archive has multiple sub-integrations",
+            severity="warning",
+        ))
+    progress("complete", 1.0)
+    return result

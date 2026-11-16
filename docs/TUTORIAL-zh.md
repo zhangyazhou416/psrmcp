@@ -9,7 +9,7 @@
 1. **自然语言驱动(推荐)**:接入 Claude Code / Claude Desktop 后,直接用中文描述需求,AI 自动选择并串联工具;
 2. **直接调用**:文中同时给出每个工具的参数示例,方便在其他 MCP 客户端或脚本中精确调用。
 
-前置阅读:[FEATURES.md](FEATURES.md)(能做什么、33 个工具一览);逐字段 Schema 见 [TOOLS.md](TOOLS.md)。
+前置阅读:[FEATURES.md](FEATURES.md)(能做什么、36 个工具一览);逐字段 Schema 见 [TOOLS.md](TOOLS.md)。
 
 ## 1. 安装
 
@@ -300,5 +300,5 @@ PSRMCP_CONFIG=$PWD/config.toml uv run python scripts/live_check.py
 
 - [FEATURES.md](FEATURES.md) — 功能总览
 - [DESIGN.md](DESIGN.md) — 架构与执行模型
-- [TOOLS.md](TOOLS.md) — 33 个工具的完整 JSON Schema 契约
+- [TOOLS.md](TOOLS.md) — 36 个工具的完整 JSON Schema 契约
 - [INSTALL.md](INSTALL.md) — 软件栈一键安装详解

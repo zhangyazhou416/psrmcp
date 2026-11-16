@@ -421,7 +421,10 @@ The following `$defs` are referenced by all tool schemas. Implementations may ge
 | `profile_measure` | true | false | true | false | no |
 | `profile_optimize` | true | false | true | false | yes |
 | `profile_smooth` | false | false | true | false | yes |
+| `profile_stability` | false | false | true | false | yes |
+| `profile_pca` | false | false | true | false | yes |
 | `single_pulse_analyze` | true | false | true | false | yes |
+| `dynamic_spectra` | false | false | true | false | yes |
 | `rotation_measure_fit` | true | false | true | false | yes |
 | `rvm_fit` | true | false | true | false | no |
 | `polarization_calibrate` | false | false | true | false | yes |
@@ -967,7 +970,7 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ### 5.7 `archive_inspect`
 
-**Purpose**: Reads PSRFITS/PSRARCHIVE metadata, dimensions, and basic statistics without modifying the file. Should be called before processing any data.
+**Purpose**: Reads PSRFITS/PSRARCHIVE metadata, dimensions, and basic statistics without modifying the file. Should be called before processing any data. `include_integrations` returns per-sub-integration rows (S/N, nbin, nchan, centre frequency) via psrstat's subint loop; per-sub-int mjd/duration are not exposed by the installed psrstat and stay null, and rows are capped by `max_integrations` (with a truncation warning).
 
 **Backend**: psrchive  
 **Long-running**: no  
@@ -1945,7 +1948,7 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ### 5.18 `profile_measure`
 
-**Purpose**: Measures profile metrics of an archive, such as S/N, FWHM, flux density, and polarization parameters. Read-only.
+**Purpose**: Measures profile metrics of an archive, such as S/N, FWHM, flux density, and polarization parameters. Read-only. With `generate_plot=true` the archive is rendered via psrplot's headless PNG device (`profile` -> flux-vs-phase, `phase_frequency` -> frequency-phase map); rendering failures degrade to a `W_PLOT_UNAVAILABLE` warning.
 
 **Backend**: psrstat / vap / psrchive Python bindings  
 **Long-running**: no  
@@ -2195,7 +2198,176 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.21 `single_pulse_analyze`
+### 5.21 `profile_stability`
+
+**Purpose**: Profile stability study with psrstability: `archives` are per-sub-integration chunk archives (chain archive_split with `per_subint=1` first). psrstability aggregates the first `turns` chunks into a running mean; every chunk beyond that emits one averaged-profile artifact, so `n_profiles = n_archives - turns` (chunks are staged and fed as separate files because psrstability counts inputs, not sub-integrations — verified on the installed build, where the default turns of 52106 produces nothing). `form_invariant` (-i) builds the Stokes-invariant profile; `preserve_time_resolution` (-F) skips the final tscrunch. Every output carries all input chunks as provenance parents.
+
+**Backend**: psrstability
+**Long-running**: yes
+**Annotations**: `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### Input Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/profile_stability.input.json",
+  "type": "object",
+  "required": [
+    "archives"
+  ],
+  "properties": {
+    "archives": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "maxItems": 128,
+      "description": "Per-sub-integration chunk archives (e.g. from archive_split with per_subint=1); n_profiles = n_archives - turns"
+    },
+    "root": {
+      "type": "string"
+    },
+    "turns": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 10,
+      "description": "Chunks aggregated into the running mean before averaged profiles start being emitted (-t)"
+    },
+    "form_invariant": {
+      "type": "boolean",
+      "default": false,
+      "description": "Form the invariant (Stokes-invariant) profile (-i)"
+    },
+    "preserve_time_resolution": {
+      "type": "boolean",
+      "default": false,
+      "description": "Do not tscrunch the averaged profiles (-F)"
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Output Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/profile_stability.output.json",
+  "type": "object",
+  "required": ["result_type", "profiles", "n_profiles", "turns", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "profiles": {"type": "array", "items": {"$ref": "#/$defs/ArtifactRef"}},
+    "n_profiles": {"type": "integer", "minimum": 0},
+    "turns": {"type": "integer", "minimum": 1},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Error Codes
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+
+### 5.22 `profile_pca`
+
+**Purpose**: Principal-component analysis of sub-integration profile differences with psrpca: the archive (needs multiple sub-integrations) is fit against `standard_profile`, the difference profiles are decomposed, and every product psrpca writes is committed as an artifact — difference-profile archive, eigenvector archive, rotated/scaled archive, and the eigenvalues / decomposition / covariance / profiles text tables (eigenvalues carry one value per phase bin). `diffs_archive` is null with a `W_PCA_NO_DIFFS` warning when the run produced no difference archive.
+
+**Backend**: psrpca
+**Long-running**: yes
+**Annotations**: `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### Input Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/profile_pca.input.json",
+  "type": "object",
+  "required": [
+    "archive",
+    "standard_profile"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Archive with multiple sub-integrations to decompose"
+    },
+    "standard_profile": {
+      "type": "string",
+      "description": "Standard profile the sub-integrations are matched against (-s)"
+    },
+    "root": {
+      "type": "string"
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Output Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/profile_pca.output.json",
+  "type": "object",
+  "required": ["result_type", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "diffs_archive": {"oneOf": [{"$ref": "#/$defs/ArtifactRef"}, {"type": "null"}]},
+    "evecs_archive": {"oneOf": [{"$ref": "#/$defs/ArtifactRef"}, {"type": "null"}]},
+    "rotated_scaled_archive": {"oneOf": [{"$ref": "#/$defs/ArtifactRef"}, {"type": "null"}]},
+    "eigenvalues_artifact": {"type": ["string", "null"]},
+    "decomposition_artifact": {"type": ["string", "null"]},
+    "covariance_artifact": {"type": ["string", "null"]},
+    "profiles_artifact": {"type": ["string", "null"]},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Error Codes
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+### 5.23 `single_pulse_analyze`
 
 **Purpose**: Single-pulse analysis (psrspa). At least one analysis mode is required, and the modes split into two exclusive groups: (a) phase-resolved histograms (flux / polarisation degree / PA / linear / circular), maximum amplitude inside phase ranges, and linear-vs-PA scatter data; (b) per-pulse detection (`find_pulses`, giant-pulse search with an allowlisted finder algorithm) — psrspa's `-a` returns early and silently skips group (a), so the tool rejects the combination up front. Phase-resolved histograms are written one file per phase bin in the requested range (e.g. 411 files for range 0.3-0.7 on nbin=1024); they are bundled into a single text artifact with `# >>> <filename>` section headers. Max-amplitude entries carry phase bin indices (not turns), verified against the installed build. Histogram modes require a psrspa build with GSL support.
 
@@ -2362,7 +2534,95 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.22 `rotation_measure_fit`
+### 5.24 `dynamic_spectra`
+
+**Purpose**: Per-pulse flux dynamic spectrum with psrflux: each sub-integration is matched against `standard_profile` and its per-channel flux density is written as an ASCII table (columns `isub ichan time(min) freq(MHz) flux flux_err` after a #-comment header; the table is committed as a text artifact with the archive and standard as provenance parents). `align=per_profile` aligns the standard to each profile separately (-a); `align=none` disables alignment fitting (-A). The parsed summary (rows, distinct sub-ints/channels, MJD0, flux method) rides along in the result — the base data for modulation-index and pulse-energy studies (pairs with `single_pulse_analyze` and `profile_stability`).
+
+**Backend**: psrflux
+**Long-running**: yes
+**Annotations**: `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### Input Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/dynamic_spectra.input.json",
+  "type": "object",
+  "required": [
+    "archive",
+    "standard_profile"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Archive to extract the per-pulse flux table from (read-only input)"
+    },
+    "standard_profile": {
+      "type": "string",
+      "description": "Standard profile each sub-integration is matched against (-s)"
+    },
+    "root": {
+      "type": "string"
+    },
+    "align": {
+      "enum": [
+        "default",
+        "per_profile",
+        "none"
+      ],
+      "default": "default",
+      "description": "Standard alignment: per_profile aligns the standard to each profile separately (-a), none disables alignment fitting (-A)"
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Output Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/dynamic_spectra.output.json",
+  "type": "object",
+  "required": ["result_type", "ds_artifact", "n_rows", "n_subints", "n_channels", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "ds_artifact": {"$ref": "#/$defs/ArtifactRef"},
+    "n_rows": {"type": "integer", "minimum": 0},
+    "n_subints": {"type": "integer", "minimum": 0},
+    "n_channels": {"type": "integer", "minimum": 0},
+    "mjd0": {"type": ["number", "null"]},
+    "flux_method": {"type": ["string", "null"]},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Error Codes
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+### 5.25 `rotation_measure_fit`
 
 **Purpose**: Fit the rotation measure (rmfit) of a calibrated, tscrunched, dedispersed archive. Methods (at least one): brute-force search over trial RMs (`brute_force` for auto bounds or `rm_range` for explicit `min,max,steps` bounds — mutually exclusive), iterative two-halves-of-band refinement (`refine`), or the quadratic method by Noutsos et al. 2008 (`quadratic_window` / `quadratic_per_bin`, phase windows in turns). `save_rm_archive=true` additionally writes a new archive artifact with the per-sub-int auxiliary RM applied. rmfit's text output is parsed defensively; RM values that cannot be parsed are reported via `W_RMFIT_UNPARSED`.
 
@@ -2490,7 +2750,7 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.23 `rvm_fit`
+### 5.26 `rvm_fit`
 
 **Purpose**: Fit the rotating vector model to the position-angle swing of a polarimetric archive with psrmodel. The archive is tscrunched/fscrunched internally, converted to Stokes, and its PA curve corrected to infinite frequency using the header RM; the fit returns `alpha` (magnetic-axis colatitude), `beta` (`use_beta=true`) or `zeta` (line-of-sight colatitude), `psi0`/`phi0`, and the fit chi^2 (`chisq`, `nfree`, `reduced_chisq`), all in degrees. Phase ranges (`include`/`exclude`/`opm`, each "deg0:deg1" in pulse-longitude degrees) select the constrained bins and mark orthogonal-mode ranges; `ortho` switches to the orthometric parameterization; `mlgain` uses maximum-likelihood gains; `residuals` saves the post-fit PA (`psi`) or Q/U (`stokes`) residual table as a text artifact. Requires recoverable Stokes Q/U: archives without it (npol<4, uncalibrated) make psrmodel exit 0 with only an InvalidState note on stderr, which psrmcp maps to `E_INVALID_INPUT` ("incomplete polarization information"); success is otherwise verified by the `chisq=` line, not the exit code.
 
@@ -2621,7 +2881,7 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.24 `polarization_calibrate`
+### 5.27 `polarization_calibrate`
 
 **Purpose**: Polarimetrically (and optionally flux) calibrate a pulsar archive with pac. Exactly one calibration source: `calibrators` (PolnCal / FluxCal-On / FluxCal-Off scans; the calibrator database is rebuilt in memory per call, so each call is self-contained) or `model` (a pcm/pacv solution archive applied directly). Models: `singleaxis` (default), `polar` (`-s`), `reception` (`-S`). The `*_match` flags can only RELAX pac's matching criteria (each disables one criterion); `match_sequence` restricts to calibrators observed before/after the pulsar. pac catches per-file errors internally and still exits 0, so success is verified by the presence of the calibrated output; when polarimetric calibration succeeds but flux calibration does not, pac appends `P` to the output name and `W_PAC_POLN_ONLY` / `W_PAC_FLUXCAL_FAILED` is reported (the `P` suffix is expected and silent when `flux_calibration=false`). Model solutions run without a calibrator database, so flux calibration is skipped with `W_PAC_NO_FLUXDB`.
 
@@ -2769,7 +3029,7 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.25 `calibrator_database`
+### 5.28 `calibrator_database`
 
 **Purpose**: Build a pac calibrator database summary (`database.txt` artifact) from calibrator archive scans. Entries are indexed by header metadata (time, position, frequency, receiver) so pac can match them against pulsar observations; all entries are parsed and returned inline (`entries` with `obs_type` from the archive header, e.g. PolnCal / FluxCal-On / FluxCal-Off, plus per-type counts in `entry_types`). pac identifies calibrator files by extension, so every listed file must have one (`E_INVALID_INPUT` otherwise); the supplied extensions are added to pac's default scan set (cf/pcal/fcal/pfit) via `-u`. "No calibrators found" exits non-zero and surfaces as `E_PROCESS_FAILED`.
 
@@ -2846,9 +3106,9 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
 
 ---
 
-### 5.26 `toa_extract`
+### 5.29 `toa_extract`
 
-**Purpose**: Extracts TOAs from an archive against a standard profile and produces a TEMPO `.tim` file.
+**Purpose**: Extracts TOAs from an archive against a standard profile and produces a TEMPO `.tim` file. With `include_snr=true` pat runs with `-C snr`, so every TOA line carries a `-snr <value>` flag; `min_snr` then filters on the measured S/N (without it, min_snr falls back to a heuristic amplitude column and the reported `snr` stats are amplitude-based).
 
 **Backend**: pat  
 **Long-running**: yes  
@@ -2886,6 +3146,11 @@ Identical envelope to `catalog_search` (§5.3): `CatalogSearchResult` with `reco
       "type": "number",
       "minimum": 0,
       "default": 0
+    },
+    "include_snr": {
+      "type": "boolean",
+      "default": false,
+      "description": "Ask pat to report each TOA's S/N (-C snr, appended as a -snr flag in tempo2 format); min_snr then filters on the measured S/N"
     },
     "output_name": {"type": "string", "maxLength": 128},
     "execution_mode": {
@@ -2954,7 +3219,7 @@ Semantic validation:
 
 ---
 
-### 5.27 `timing_fit`
+### 5.30 `timing_fit`
 
 **Purpose**: Runs a timing fit on `.par` + `.tim` with PINT or tempo2, returning the updated `.par`, fit statistics, residuals, and residual plots.
 
@@ -3091,7 +3356,7 @@ Semantic validation:
 
 ---
 
-### 5.28 `timing_diagnose`
+### 5.31 `timing_diagnose`
 
 **Purpose**: Runs residual and model diagnostics on existing `.par` + `.tim` without refitting. Can check outliers, DM variations, JUMPs, and the residual distribution.
 
@@ -3207,179 +3472,6 @@ Semantic validation:
 #### Error Codes
 
 `E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_VERSION_INCOMPATIBLE`, `E_PROCESS_FAILED`
-
----
-
-### 5.29 `artifact_list`
-
-**Purpose**: Lists artifacts in the current workspace, with paging by kind, time, and cursor.
-
-**Backend**: ArtifactStore  
-**Long-running**: no  
-**Annotations**: `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
-
-#### Input Schema
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://psrmcp.local/schemas/artifact_list.input.json",
-  "type": "object",
-  "properties": {
-    "kind": {
-      "enum": [
-        "archive",
-        "ephemeris",
-        "tim",
-        "par",
-        "profile",
-        "mask",
-        "plot",
-        "residuals",
-        "log",
-        "catalog",
-        "json",
-        "other"
-      ]
-    },
-    "limit": {
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 500,
-      "default": 50
-    },
-    "cursor": {"type": "string"},
-    "created_after": {"type": "string", "format": "date-time"}
-  },
-  "additionalProperties": false
-}
-```
-
-#### Output Schema
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://psrmcp.local/schemas/artifact_list.output.json",
-  "type": "object",
-  "required": ["result_type", "artifacts", "count"],
-  "properties": {
-    "result_type": {"const": "completed"},
-    "artifacts": {
-      "type": "array",
-      "items": {"$ref": "#/$defs/ArtifactRef"}
-    },
-    "count": {"type": "integer", "minimum": 0},
-    "next_cursor": {"type": ["string", "null"]}
-  },
-  "additionalProperties": false
-}
-```
-
-#### Error Codes
-
-`E_INVALID_INPUT`, `E_INTERNAL`
-
----
-
-### 5.30 `job_get`
-
-**Purpose**: Queries the status and result of an asynchronous job. Fallback used only when the client does not support the MCP Tasks extension.
-
-**Backend**: JobManager  
-**Long-running**: no  
-**Annotations**: `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
-
-#### Input Schema
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://psrmcp.local/schemas/job_get.input.json",
-  "type": "object",
-  "required": ["job_id"],
-  "properties": {
-    "job_id": {
-      "type": "string",
-      "pattern": "^job_[A-Za-z0-9_-]{8,64}$"
-    }
-  },
-  "additionalProperties": false
-}
-```
-
-#### Output Schema
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://psrmcp.local/schemas/job_get.output.json",
-  "type": "object",
-  "required": ["result_type", "job"],
-  "properties": {
-    "result_type": {"const": "completed"},
-    "job": {"$ref": "#/$defs/JobRef"}
-  },
-  "additionalProperties": false
-}
-```
-
-#### Error Codes
-
-`E_INVALID_INPUT`, `E_TASK_NOT_FOUND`
-
----
-
-### 5.31 `job_cancel`
-
-**Purpose**: Requests cancellation of an asynchronous job. Cancellation is cooperative: the server sends `SIGTERM` first, and `SIGKILL`s the process group if it is still running after the grace period.
-
-**Backend**: JobManager  
-**Long-running**: no  
-**Annotations**: `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=false`, `openWorldHint=false`
-
-#### Input Schema
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://psrmcp.local/schemas/job_cancel.input.json",
-  "type": "object",
-  "required": ["job_id"],
-  "properties": {
-    "job_id": {
-      "type": "string",
-      "pattern": "^job_[A-Za-z0-9_-]{8,64}$"
-    },
-    "force": {
-      "type": "boolean",
-      "default": false,
-      "description": "Skip the grace period and kill the process group immediately"
-    }
-  },
-  "additionalProperties": false
-}
-```
-
-#### Output Schema
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://psrmcp.local/schemas/job_cancel.output.json",
-  "type": "object",
-  "required": ["result_type", "job"],
-  "properties": {
-    "result_type": {"const": "completed"},
-    "job": {"$ref": "#/$defs/JobRef"}
-  },
-  "additionalProperties": false
-}
-```
-
-#### Error Codes
-
-`E_INVALID_INPUT`, `E_TASK_NOT_FOUND`, `E_JOB_NOT_RUNNING`
 
 ---
 
@@ -3580,6 +3672,179 @@ Semantic validation:
 #### Error Codes
 
 `E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`, `E_TIMEOUT`
+
+---
+
+### 5.34 `artifact_list`
+
+**Purpose**: Lists artifacts in the current workspace, with paging by kind, time, and cursor.
+
+**Backend**: ArtifactStore  
+**Long-running**: no  
+**Annotations**: `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### Input Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/artifact_list.input.json",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "enum": [
+        "archive",
+        "ephemeris",
+        "tim",
+        "par",
+        "profile",
+        "mask",
+        "plot",
+        "residuals",
+        "log",
+        "catalog",
+        "json",
+        "other"
+      ]
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 500,
+      "default": 50
+    },
+    "cursor": {"type": "string"},
+    "created_after": {"type": "string", "format": "date-time"}
+  },
+  "additionalProperties": false
+}
+```
+
+#### Output Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/artifact_list.output.json",
+  "type": "object",
+  "required": ["result_type", "artifacts", "count"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "artifacts": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/ArtifactRef"}
+    },
+    "count": {"type": "integer", "minimum": 0},
+    "next_cursor": {"type": ["string", "null"]}
+  },
+  "additionalProperties": false
+}
+```
+
+#### Error Codes
+
+`E_INVALID_INPUT`, `E_INTERNAL`
+
+---
+
+### 5.35 `job_get`
+
+**Purpose**: Queries the status and result of an asynchronous job. Fallback used only when the client does not support the MCP Tasks extension.
+
+**Backend**: JobManager  
+**Long-running**: no  
+**Annotations**: `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### Input Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/job_get.input.json",
+  "type": "object",
+  "required": ["job_id"],
+  "properties": {
+    "job_id": {
+      "type": "string",
+      "pattern": "^job_[A-Za-z0-9_-]{8,64}$"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Output Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/job_get.output.json",
+  "type": "object",
+  "required": ["result_type", "job"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "job": {"$ref": "#/$defs/JobRef"}
+  },
+  "additionalProperties": false
+}
+```
+
+#### Error Codes
+
+`E_INVALID_INPUT`, `E_TASK_NOT_FOUND`
+
+---
+
+### 5.36 `job_cancel`
+
+**Purpose**: Requests cancellation of an asynchronous job. Cancellation is cooperative: the server sends `SIGTERM` first, and `SIGKILL`s the process group if it is still running after the grace period.
+
+**Backend**: JobManager  
+**Long-running**: no  
+**Annotations**: `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=false`, `openWorldHint=false`
+
+#### Input Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/job_cancel.input.json",
+  "type": "object",
+  "required": ["job_id"],
+  "properties": {
+    "job_id": {
+      "type": "string",
+      "pattern": "^job_[A-Za-z0-9_-]{8,64}$"
+    },
+    "force": {
+      "type": "boolean",
+      "default": false,
+      "description": "Skip the grace period and kill the process group immediately"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### Output Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/job_cancel.output.json",
+  "type": "object",
+  "required": ["result_type", "job"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "job": {"$ref": "#/$defs/JobRef"}
+  },
+  "additionalProperties": false
+}
+```
+
+#### Error Codes
+
+`E_INVALID_INPUT`, `E_TASK_NOT_FOUND`, `E_JOB_NOT_RUNNING`
 
 ---
 

@@ -1,4 +1,5 @@
-"""single_pulse_analyze (TOOLS.md 5.21): psrspa single-pulse analysis."""
+"""single_pulse_analyze (TOOLS.md 5.23) + dynamic_spectra (5.24): psrspa /
+psrflux single-pulse and per-pulse flux analysis."""
 
 from __future__ import annotations
 
@@ -13,8 +14,9 @@ from ..errors import ErrorCode, PsrmcpError
 from ..execution.runner import CancelHook
 from ..execution.workspace import utcnow
 from ..models.common import ArtifactKind, WarningInfo
-from ..models.inputs import SinglePulseAnalyzeInput
+from ..models.inputs import DynamicSpectraInput, SinglePulseAnalyzeInput
 from ..models.results import (
+    DynamicSpectraResult,
     MaxAmplitudeRow,
     SinglePulseAnalyzeResult,
     SinglePulseRow,
@@ -36,6 +38,18 @@ def register(reg: ToolRegistry) -> None:
         input_model=SinglePulseAnalyzeInput,
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False),
         handler=_analyze,
+        long_task=True,
+    ))
+    reg.add(ToolSpec(
+        name="dynamic_spectra",
+        description="Per-pulse flux dynamic spectrum (psrflux): each sub-integration is matched "
+                    "against a standard profile and its per-channel flux density is written as "
+                    "an ASCII table (isub, ichan, time, freq, flux, flux_err) — the base data "
+                    "for modulation-index and pulse-energy studies. Read-only input; the table "
+                    "is a new artifact. Long task; supports async and cancellation.",
+        input_model=DynamicSpectraInput,
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False),
+        handler=_dynamic_spectra,
         long_task=True,
     ))
 
@@ -171,4 +185,64 @@ async def _analyze(ctx: AppContext, inp: SinglePulseAnalyzeInput, progress) -> S
         pulses=pulses,
         max_amplitudes=max_amplitudes,
         warnings=warnings,
+    )
+
+
+async def _dynamic_spectra(ctx: AppContext, inp: DynamicSpectraInput, progress) -> DynamicSpectraResult:
+    started = utcnow()
+    t0 = time.monotonic()
+    psr_info = await ctx.backends.require("psrchive")
+    binary = _psrchive_tool(ctx, "psrflux")
+    resolved = ctx.resolver.resolve(inp.archive, root=inp.root, what="archive")
+    std = ctx.resolver.resolve(inp.standard_profile, root=inp.root, what="standard profile")
+
+    # psrflux writes <input>.ds NEXT TO the input file; run on a staged copy
+    job_tmp = ctx.ws.new_job_tmp(f"dsflux_{time.time_ns()}")
+    local_src = job_tmp / "ds_src.ar"
+    shutil.copy2(resolved.resolved, local_src)
+    local_std = job_tmp / "ds_std.ar"
+    shutil.copy2(std.resolved, local_std)
+
+    argv = psa.psrflux_ds_cmd(binary, str(local_src), str(local_std), align=inp.align)
+    progress("extracting flux table", 0.4)
+    run = await ctx.runner.run(
+        argv, cwd=job_tmp, timeout_s=ctx.cfg.server.job_timeout_s, cancel=CancelHook()
+    )
+    ds_path = job_tmp / "ds_src.ar.ds"
+    if run.exit_code != 0 or not ds_path.exists():
+        log_id = log_artifact_from_stderr(ctx, job_key="dsflux", stderr=run.stderr_tail(), argv=argv)
+        raise PsrmcpError(
+            ErrorCode.PROCESS_FAILED,
+            f"psrflux produced no dynamic spectrum (exit code {run.exit_code}): "
+            f"{run.stderr_tail(300)}",
+            log_artifact_id=log_id,
+        )
+
+    text = ds_path.read_text(errors="replace")
+    parsed = psa.parse_psrflux_ds(text)
+    prov = make_provenance(
+        tool="dynamic_spectra",
+        backend="psrflux",
+        backend_version=psr_info.version,
+        params=inp.model_dump(mode="json"),
+        started=started,
+        duration_s=time.monotonic() - t0,
+        command=argv,
+    )
+    ds = ctx.store.commit(
+        src_path=ds_path,
+        filename=(inp.output_name or "dynamic_spectrum") + ".txt",
+        kind=ArtifactKind.OTHER,
+        format_name="text (dynamic spectrum)",
+        provenance=prov,
+        parents=[p for p in (resolved.artifact_id, std.artifact_id) if p],
+    )
+    progress("complete", 1.0)
+    return DynamicSpectraResult(
+        ds_artifact=ds,
+        n_rows=parsed["n_rows"],
+        n_subints=parsed["n_subints"],
+        n_channels=parsed["n_channels"],
+        mjd0=parsed["mjd0"],
+        flux_method=parsed["flux_method"],
     )

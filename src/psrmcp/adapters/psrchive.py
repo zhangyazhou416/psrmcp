@@ -159,12 +159,18 @@ def paz_cmd(binary: str, source: str, channel_mask: str, out_dir: str) -> list[s
 
 
 def pat_cmd(binary: str, source: str, standard: str, *, algorithm: str = "PGS",
-            tempo2_format: bool = True) -> list[str]:
+            tempo2_format: bool = True,
+            attributes: list[str] | None = None) -> list[str]:
     if algorithm not in PAT_ALGORITHMS:
         raise ValueError(f"pat algorithm must be one of {PAT_ALGORITHMS}, got {algorithm!r}")
     args = [binary, "-f", "tempo2" if tempo2_format else "tempo1"]
     args += ["-A", algorithm]
     args += ["-s", standard]
+    if attributes:
+        # -C selects vap-like attributes; in tempo2 format each lands in the
+        # TOA flag tail as "-<name> <value>" (verified in
+        # More/Timing/ArrivalTime_tempo2.C and against the installed pat).
+        args += ["-C", " ".join(attributes)]
     args.append(source)
     return args
 
@@ -194,15 +200,19 @@ def pam_scrunch_cmd(
     remove_baseline: bool = False,
     centre: bool = False,
 ) -> list[str]:
-    """archive_transform backend (pam). -F/-T/-b take integral SCRUNCH FACTORS
-    (2 = halve the resolution; factor 1 is a no-op and omitted), matching the
-    documented `pam -FTp` idiom; -p sums polarisations, -r removes the
+    """archive_transform backend (pam). The lowercase flags take integral
+    SCRUNCH FACTORS (2 = halve the resolution; factor 1 is a no-op and
+    omitted). Contract verified on the installed pam (2026-11-15): uppercase
+    -F/-T are BOOLEAN "scrunch to one channel/subint" flags — an argument
+    after them is eaten as a positional filename, so `-F 2` silently
+    collapses the archive to ONE channel (this adapter previously shipped
+    that bug). --setnchn/--setnsub take target counts but fail on
+    non-divisible targets (no output produced), so the tool derives integral
+    factors and passes them here. -p sums polarisations, -r removes the
     off-pulse baseline, -c centres the profile. -e ext writes
-    <basename>.<ext> into the process cwd (same contract as pam_cmd).
-    TODO(contract): re-verify -F/-T factor semantics against the installed
-    pam in tests/contract before the first release that exposes them."""
+    <basename>.<ext> into the process cwd (same contract as pam_cmd)."""
     args = [binary]
-    for flag, factor in (("-F", freq_factor), ("-T", time_factor), ("-b", bin_factor)):
+    for flag, factor in (("-f", freq_factor), ("-t", time_factor), ("-b", bin_factor)):
         if factor is not None and factor > 1:
             args += [flag, str(factor)]
     if sum_pols:
@@ -1042,4 +1052,138 @@ def parse_psrstat_channels(text: str) -> list[float | None]:
             while len(out) <= chan:
                 out.append(None)
             out[chan] = value
+    return out
+
+
+def psrstat_subints_cmd(binary: str, source: str, nsub: int, limit: int) -> list[str]:
+    """Per-sub-integration stats via psrstat's loop option (contract verified
+    on PSRCHIVE 2026-10-16 on 2026-11-15; the loop index is named `subint`,
+    not `int`): rows print as `<file> subint=<i> <snr> <nbin> <nchan> <freq>`
+    (-Q, comma-separated expressions). Values that cannot be computed print
+    as '-' (e.g. per-subint mjd/duration/wt are NOT exposed by this build)."""
+    last = max(min(nsub, limit) - 1, 0)
+    return [binary, "-Q", "-l", f"subint=0-{last}",
+            "-c", "snr,nbin,nchan,freq", source]
+
+
+def parse_psrstat_subints(text: str) -> list[dict[str, Any]]:
+    """Parse psrstat_subints_cmd output into per-subint rows:
+    {index, snr, nbin, nchan, freq_mhz} (None where '-' was printed).
+    Row shape: `<filename> subint=<i> <snr> <nbin> <nchan> <freq>`; the
+    leading filename token is dropped explicitly."""
+    rows: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        tokens = stripped.split()
+        if tokens and "=" not in tokens[0]:
+            tokens = tokens[1:]  # -Q prefixes each row with the filename
+        index: int | None = None
+        values: list[Any] = []
+        for tok in tokens:
+            if tok.startswith("subint="):
+                try:
+                    index = int(tok[7:])
+                except ValueError:
+                    index = None
+            elif "=" not in tok:
+                values.append(None if tok == "-" else _coerce(tok))
+        if index is not None and len(values) >= 4:
+            rows.append({
+                "index": index,
+                "snr": values[0] if isinstance(values[0], (int, float)) else None,
+                "nbin": values[1] if isinstance(values[1], int) else None,
+                "nchan": values[2] if isinstance(values[2], int) else None,
+                # psrstat prints centre frequency as an integer (e.g. 1412)
+                "freq_mhz": float(values[3]) if isinstance(values[3], (int, float)) else None,
+            })
+    return rows
+
+
+# profile_measure plot types -> psrplot plot names (contract verified on the
+# installed stack on 2026-11-15: -D <path>/PNG renders headless PNG files).
+PSRPLOT_TYPES: dict[str, str] = {"profile": "flux", "phase_frequency": "freq"}
+
+
+def psrplot_cmd(binary: str, source: str, png_path: str, plot_type: str = "profile") -> list[str]:
+    plot = PSRPLOT_TYPES.get(plot_type)
+    if plot is None:
+        raise ValueError(f"psrplot type must be one of {sorted(PSRPLOT_TYPES)}, got {plot_type!r}")
+    return [binary, "-D", f"{png_path}/PNG", "-p", plot, source]
+
+
+def psrstability_cmd(binary: str, files: list[str], *, turns: int, out_dir: str,
+                     form_invariant: bool = False,
+                     preserve_time_resolution: bool = False) -> list[str]:
+    """psrstability accumulates one running-mean profile per input FILE: the
+    first `turns` files are aggregated, every further file then emits
+    `<out_dir>/profile_<n>.<ext>` (ext defaults to "ar"; default turns is
+    52106, so it must be given explicitly). Verified on the installed stack
+    on 2026-11-15: `-t 2 -O out <4 files>` produced out/profile_0.ar and
+    profile_1.ar plus the stdout marker "reached full archive, ...". -i
+    forms the invariant profile, -F preserves full time resolution."""
+    args = [binary, "-t", str(turns)]
+    if form_invariant:
+        args.append("-i")
+    if preserve_time_resolution:
+        args.append("-F")
+    args += ["-O", out_dir]
+    args += files
+    return args
+
+
+def psrpca_cmd(binary: str, archive: str, standard: str, prefix: str = "pca") -> list[str]:
+    """psrpca writes <prefix>_{diffs.ar,evecs.ar,evals.dat,decomposition.dat,
+    covariance.dat,profiles.dat,rotated_scaled.ar} into the process CWD
+    (verified: all seven appeared with just -s/-p on the installed build)."""
+    return [binary, "-s", standard, "-p", prefix, archive]
+
+
+def psrflux_ds_cmd(binary: str, archive: str, standard: str,
+                   align: str = "default") -> list[str]:
+    """psrflux dynamic-spectrum mode: writes `<archive>.ds` (ASCII) next to
+    the input — columns `isub ichan time(min) freq(MHz) flux flux_err` after
+    a #-comment header (verified). -a aligns the standard per profile, -A
+    disables alignment fitting."""
+    args = [binary, "-s", standard]
+    if align == "per_profile":
+        args.append("-a")
+    elif align == "none":
+        args.append("-A")
+    args.append(archive)
+    return args
+
+
+def parse_psrflux_ds(text: str) -> dict[str, Any]:
+    """Parse a .ds dynamic-spectrum file: header metadata (MJD0, flux method)
+    plus the per-(subint, chan) rows. Returns n_rows, mjd0, n_subints,
+    n_channels, flux_method."""
+    out: dict[str, Any] = {"n_rows": 0, "mjd0": None, "n_subints": 0,
+                           "n_channels": 0, "flux_method": None}
+    subints: set[int] = set()
+    chans: set[int] = set()
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            if "MJD0:" in stripped:
+                try:
+                    out["mjd0"] = float(stripped.split(":", 1)[1])
+                except (IndexError, ValueError):
+                    pass
+            elif "Flux method:" in stripped:
+                out["flux_method"] = stripped.split(":", 1)[1].strip()
+            continue
+        if not stripped:
+            continue
+        tok = stripped.split()
+        if len(tok) >= 6:
+            try:
+                subints.add(int(tok[0]))
+                chans.add(int(tok[1]))
+                out["n_rows"] += 1
+            except ValueError:
+                continue
+    out["n_subints"] = len(subints)
+    out["n_channels"] = len(chans)
     return out

@@ -10,7 +10,7 @@ psrmcp 把脉冲星射电天文的专业处理软件栈(**dspsr / PSRCHIVE / tem
 
 | 后端 | 作用 |
 |---|---|
-| PSRCHIVE | archive 检查/加工(vap / psrstat / psrconv / pam / psredit / psrsplit / psrdiff / pdmp / psrsmooth / psrspa / rmfit / psrmodel / pac / pat / psradd / paz) |
+| PSRCHIVE | archive 检查/加工(vap / psrstat / psrconv / pam / psredit / psrsplit / psrdiff / pdmp / psrsmooth / psrspa / rmfit / psrmodel / pac / psrstability / psrpca / psrflux / pat / psradd / paz) |
 | dspsr | 原始数据(filterbank / PSRFITS)消色散折叠 |
 | tempo2 | 脉冲星计时(星历、相位预测) |
 | psrcat | ATNF 脉冲星星表本地查询与星历导出 |
@@ -18,7 +18,7 @@ psrmcp 把脉冲星射电天文的专业处理软件栈(**dspsr / PSRCHIVE / tem
 
 后端缺失时服务器不崩溃:`pulsar_environment` 逐个报告 available/reason,依赖缺失后端的工具返回 `E_ENV_MISSING` 与提示。
 
-## 33 个工具(按处理链路分组)
+## 36 个工具(按处理链路分组)
 
 **环境与数据发现**
 
@@ -70,10 +70,13 @@ psrmcp 把脉冲星射电天文的专业处理软件栈(**dspsr / PSRCHIVE / tem
 | `profile_optimize` ⏱ | pdmp 搜索最优周期与 DM(以 S/N 最大为准),报告改正量与误差,输入只读 |
 | `profile_smooth` ⏱ | psrsmooth 自适应去噪(sinc/wavelet),用于 TOA 提取或计时之前;输出为新产物 |
 | `single_pulse_analyze` ⏱ | psrspa 单脉冲分析:相位分辨流量/偏振直方图(每相位 bin 一个,打包为单个文本 artifact)、相位区间最大振幅、巨型脉冲搜索 |
+| `dynamic_spectra` ⏱ | psrflux 逐脉冲流量动态谱(sub-int x 通道 ASCII 表)——调制指数与脉冲能量研究的基础数据 |
 | `rotation_measure_fit` ⏱ | rmfit 旋转测量拟合(暴力搜索/双半频带精化/Noutsos+2008 二次法),需已校准数据,可写出 RM 改正后的 archive |
 | `rvm_fit` | psrmodel 旋转矢量模型拟合:alpha/beta 或 zeta/psi0/phi0 与卡方;可指定包含/排除相位范围;可选 PA 或 Q/U 残差表 |
 | `polarization_calibrate` ⏱ | pac 偏振(+流量)定标:匹配 PolnCal/FluxCal 扫描或直接应用 pcm/pacv 模型解;SingleAxis/Polar/Reception 模型,匹配判据可放宽 |
 | `calibrator_database` ⏱ | pac 定标器数据库摘要(database.txt),由定标器扫描构建,条目索引后内联返回 |
+| `profile_stability` ⏱ | psrstability 滑动均值稳定性研究(逐 sub-int 分块,配合 archive_split);`turns` 之后每块产出一个平均剖面 artifact |
+| `profile_pca` ⏱ | psrpca 对逐 sub-int 剖面差异做特征分解(对标准轮廓);差异/特征向量 archive 与特征值表 |
 
 **组合管线**
 
@@ -131,5 +134,5 @@ timing_diagnose      诊断:离群 TOA、是否需要 DMX/JUMP
 
 - [TUTORIAL.md](TUTORIAL.md) — 使用教程(从安装到完整处理链实战)
 - [DESIGN.md](DESIGN.md) — 架构与执行模型
-- [TOOLS.md](TOOLS.md) — 33 个工具的完整 JSON Schema 契约
+- [TOOLS.md](TOOLS.md) — 36 个工具的完整 JSON Schema 契约
 - [INSTALL.md](INSTALL.md) — 软件栈一键安装

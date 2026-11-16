@@ -388,3 +388,153 @@ def test_psrstat_per_channel_snr():
     probe = subprocess.run([psrstat, "-Q", "-l", "chan=0-1", "-c", "wt", archive],
                            capture_output=True, text=True)
     assert "-" in probe.stdout, "wt unexpectedly resolved per channel; update _flag_stats"
+
+
+def test_pam_factor_flags(tmp_path):
+    """pam's LOWERCASE -f/-t/-b take integral scrunch factors; the uppercase
+    -F/-T are boolean 'scrunch to one' flags that swallow the next argument
+    as a positional filename (the silent-collapse bug this pins)."""
+    from psrmcp.adapters import psrchive as psa
+
+    pam, vap = _which("pam"), _which("vap")
+    archive = _archive()
+    if not (pam and vap and archive):
+        pytest.skip("set PSRMCP_CONTRACT_ARCHIVE=<archive path> to run")
+
+    src = tmp_path / "src.ar"
+    shutil.copy(archive, src)
+    subprocess.run(psa.pam_scrunch_cmd(pam, str(src), "f2", freq_factor=2),
+                   capture_output=True, text=True, cwd=tmp_path)
+    out = subprocess.run(psa.vap_cmd(vap, str(tmp_path / "src.f2")),
+                         capture_output=True, text=True)
+    meta = psa.parse_vap(out.stdout)
+    nchan = int(meta.get("nchan") or 0)
+    orig_meta = psa.parse_vap(subprocess.run(psa.vap_cmd(vap, archive),
+                                             capture_output=True, text=True).stdout)
+    orig_nchan = int(orig_meta.get("nchan") or 0)
+    assert orig_nchan and nchan == orig_nchan // 2, \
+        f"pam -f 2 must halve channels: {orig_nchan} -> {nchan}"
+
+    # negative control: '-F 2' collapses to ONE channel (argument eaten)
+    src2 = tmp_path / "up.ar"
+    shutil.copy(archive, src2)
+    subprocess.run([pam, "-F", "2", "-e", "up", str(src2)],
+                   capture_output=True, text=True, cwd=tmp_path)
+    meta = psa.parse_vap(subprocess.run(psa.vap_cmd(vap, str(tmp_path / "up.up")),
+                                        capture_output=True, text=True).stdout)
+    assert int(meta.get("nchan") or 0) == 1, \
+        f"uppercase -F must collapse to one channel: {meta}"
+
+
+def test_psrstat_subint_loop(tmp_path):
+    """psrstat -Q -l 'subint=0-<n-1>' -c 'snr,nbin,nchan,freq' prints one row
+    per sub-integration; the loop index is `subint`, NOT `int`."""
+    from psrmcp.adapters import psrchive as psa
+
+    psrstat, vap, psradd = _which("psrstat"), _which("vap"), _which("psradd")
+    archive = _archive()
+    if not (psrstat and vap and psradd and archive):
+        pytest.skip("set PSRMCP_CONTRACT_ARCHIVE=<archive path> to run")
+
+    # need >= 2 sub-integrations: merge the archive with itself
+    a = tmp_path / "a.ar"
+    b = tmp_path / "b.ar"
+    shutil.copy(archive, a)
+    shutil.copy(archive, b)
+    merged = tmp_path / "merged.ar"
+    subprocess.run(psa.psradd_cmd(psradd, [str(a), str(b)], str(merged)),
+                   capture_output=True, text=True, cwd=tmp_path)
+    meta = psa.parse_vap(subprocess.run(psa.vap_cmd(vap, str(merged)),
+                                        capture_output=True, text=True).stdout)
+    nsub = int(meta.get("nsubint") or 0)
+    assert nsub >= 2, f"psradd self-merge should give >=2 subints: {meta}"
+
+    out = subprocess.run(psa.psrstat_subints_cmd(psrstat, str(merged), nsub, 100),
+                         capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr[-500:]
+    rows = psa.parse_psrstat_subints(out.stdout)
+    assert len(rows) == nsub, f"expected {nsub} rows: {out.stdout[-300:]!r}"
+    assert rows[0]["index"] == 0 and rows[-1]["index"] == nsub - 1
+    # negative control: 'int' is not a valid loop index on this build
+    bad = subprocess.run([psrstat, "-l", "int=0-0", "-c", "snr", str(merged)],
+                         capture_output=True, text=True)
+    assert "InvalidParam" in bad.stderr or "fromstring" in bad.stderr, bad.stderr[-200:]
+
+
+def test_psrplot_png_device(tmp_path):
+    """psrplot -D <path>/PNG renders headless PNG files (no display needed)."""
+    from psrmcp.adapters import psrchive as psa
+
+    psrplot = _which("psrplot")
+    archive = _archive()
+    if not (psrplot and archive):
+        pytest.skip("set PSRMCP_CONTRACT_ARCHIVE=<archive path> to run")
+    png = tmp_path / "profile.png"
+    out = subprocess.run(psa.psrplot_cmd(psrplot, archive, str(png), "profile"),
+                         capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr[-500:]
+    assert png.exists() and png.read_bytes()[:4] == b"\x89PNG"
+
+
+def test_psrstability_psrpca_psrflux_outputs(tmp_path):
+    """psrstability emits one averaged profile per chunk beyond -t (stdout
+    marker: 'reached full archive'), psrpca writes prefix_* products, and
+    psrflux -s writes an ASCII .ds next to the input."""
+    from psrmcp.adapters import psrchive as psa
+
+    psradd = _which("psradd")
+    archive = _archive()
+    if not (psradd and archive):
+        pytest.skip("set PSRMCP_CONTRACT_ARCHIVE=<archive path> to run")
+
+    # build a 4-subint archive by merging self-copies, then split per subint
+    copies = []
+    for i in range(4):
+        c = tmp_path / f"c{i}.ar"
+        shutil.copy(archive, c)
+        copies.append(str(c))
+    merged = tmp_path / "merged.ar"
+    subprocess.run(psa.psradd_cmd(psradd, copies, str(merged)),
+                   capture_output=True, text=True, cwd=tmp_path)
+
+    psrsplit, psrstability, psrpca, psrflux, pam = (
+        _which("psrsplit"), _which("psrstability"), _which("psrpca"),
+        _which("psrflux"), _which("pam"))
+    if not (psrsplit and psrstability and psrpca and psrflux and pam):
+        pytest.skip("psrchive tools not on PATH")
+
+    src = tmp_path / "split_src.ar"
+    shutil.copy(merged, src)
+    subprocess.run(psa.psrsplit_cmd(psrsplit, str(src), per_subint=1),
+                   capture_output=True, text=True, cwd=tmp_path)
+    chunks = sorted(str(p) for p in tmp_path.glob("split_src.[0-9]*.ar"))
+    assert len(chunks) >= 3
+
+    out_dir = tmp_path / "stab"
+    out_dir.mkdir()
+    stab = subprocess.run(psa.psrstability_cmd(psrstability, chunks, turns=2,
+                                               out_dir=str(out_dir)),
+                          capture_output=True, text=True, cwd=tmp_path)
+    assert stab.returncode == 0, stab.stderr[-500:]
+    profiles = sorted(out_dir.glob("profile_*.ar"))
+    assert len(profiles) == len(chunks) - 2, (
+        f"expected n_chunks - turns averaged profiles: {len(profiles)}"
+    )
+    assert "reached full archive" in stab.stdout
+
+    std = tmp_path / "merged.std"
+    subprocess.run(psa.pam_cmd(pam, str(merged), "std"), capture_output=True,
+                   text=True, cwd=tmp_path)
+    if std.exists():
+        pca = subprocess.run(psa.psrpca_cmd(psrpca, str(merged), str(std)),
+                             capture_output=True, text=True, cwd=tmp_path)
+        assert pca.returncode == 0, pca.stderr[-500:]
+        assert (tmp_path / "pca_evals.dat").exists()
+        assert (tmp_path / "pca_diffs.ar").exists()
+
+        flux = subprocess.run(psa.psrflux_ds_cmd(psrflux, str(merged), str(std)),
+                              capture_output=True, text=True, cwd=tmp_path)
+        assert flux.returncode == 0, flux.stderr[-500:]
+        ds = tmp_path / "merged.ar.ds"
+        assert ds.exists()
+        assert ds.read_text().startswith("# Dynamic spectrum")

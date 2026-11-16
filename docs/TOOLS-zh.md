@@ -412,14 +412,21 @@ MCP `tools/call` 返回：
 | `archive_merge` | false | false | true | false | 是 |
 | `archive_transform` | false | false | true | false | 是 |
 | `archive_edit` | false | false | true | false | 否 |
+| `archive_split` | false | false | true | false | 是 |
+| `archive_compare` | true | false | true | false | 否 |
 | `dedisperse` | false | false | true | false | 是 |
 | `rfi_scan` | true | false | true | false | 否 |
 | `rfi_zap` | false | false | true | false | 否 |
 | `profile_standardize` | false | false | true | false | 否 |
 | `profile_measure` | true | false | true | false | 否 |
 | `profile_optimize` | true | false | true | false | 是 |
+| `profile_smooth` | false | false | true | false | 是 |
+| `profile_stability` | false | false | true | false | 是 |
+| `profile_pca` | false | false | true | false | 是 |
 | `single_pulse_analyze` | true | false | true | false | 是 |
+| `dynamic_spectra` | false | false | true | false | 是 |
 | `rotation_measure_fit` | true | false | true | false | 是 |
+| `rvm_fit` | true | false | true | false | 否 |
 | `polarization_calibrate` | false | false | true | false | 是 |
 | `calibrator_database` | false | false | true | false | 是 |
 | `toa_extract` | false | false | true | false | 是 |
@@ -963,7 +970,7 @@ MCP `tools/call` 返回：
 
 ### 5.7 `archive_inspect`
 
-**用途**：读取 PSRFITS/PSRARCHIVE 的元数据、维度和基本统计，不修改文件。处理任何数据前应先调用。
+**用途**：读取 PSRFITS/PSRARCHIVE 的元数据、维度和基本统计，不修改文件。处理任何数据前应先调用。`include_integrations` 通过 psrstat 的 subint 循环返回逐 sub-int 行（S/N、nbin、nchan、中心频率）；装机版 psrstat 不暴露逐 sub-int 的 mjd/duration（保持 null），行数受 `max_integrations` 限制（超限带截断警告）。
 
 **后端**：psrchive  
 **长任务**：否  
@@ -1941,7 +1948,7 @@ MCP `tools/call` 返回：
 
 ### 5.18 `profile_measure`
 
-**用途**：测量 archive 的轮廓指标，例如 S/N、FWHM、流量和偏振参数。只读。
+**用途**：测量 archive 的轮廓指标，例如 S/N、FWHM、流量和偏振参数。只读。`generate_plot=true` 时用 psrplot 的免显示 PNG 设备渲染（`profile` -> 流量-相位图，`phase_frequency` -> 频率-相位图）；渲染失败降级为 `W_PLOT_UNAVAILABLE` 警告。
 
 **后端**：psrstat / vap / psrchive Python 绑定  
 **长任务**：否  
@@ -2191,7 +2198,176 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.21 `single_pulse_analyze`
+### 5.21 `profile_stability`
+
+**用途**：用 psrstability 研究剖面稳定性：`archives` 是逐 sub-int 分块档案（先用 archive_split `per_subint=1` 切好）。psrstability 把前 `turns` 块聚成滑动均值，之后的每块各产出一个平均剖面 artifact，因此 `n_profiles = n_archives - turns`（各块以独立文件喂入，因为 psrstability 按输入文件计数而非 sub-int 数——已在装机版验证，默认 turns=52106 时无任何输出）。`form_invariant`（-i）构造 Stokes 不变量剖面；`preserve_time_resolution`（-F）跳过最终 tscrunch。每个输出以全部输入块为 provenance 父。
+
+**后端**： psrstability
+**长任务**： yes
+**Annotations**： `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### 输入 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/profile_stability.input.json",
+  "type": "object",
+  "required": [
+    "archives"
+  ],
+  "properties": {
+    "archives": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "maxItems": 128,
+      "description": "Per-sub-integration chunk archives (e.g. from archive_split with per_subint=1); n_profiles = n_archives - turns"
+    },
+    "root": {
+      "type": "string"
+    },
+    "turns": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 10,
+      "description": "Chunks aggregated into the running mean before averaged profiles start being emitted (-t)"
+    },
+    "form_invariant": {
+      "type": "boolean",
+      "default": false,
+      "description": "Form the invariant (Stokes-invariant) profile (-i)"
+    },
+    "preserve_time_resolution": {
+      "type": "boolean",
+      "default": false,
+      "description": "Do not tscrunch the averaged profiles (-F)"
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 输出 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/profile_stability.output.json",
+  "type": "object",
+  "required": ["result_type", "profiles", "n_profiles", "turns", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "profiles": {"type": "array", "items": {"$ref": "#/$defs/ArtifactRef"}},
+    "n_profiles": {"type": "integer", "minimum": 0},
+    "turns": {"type": "integer", "minimum": 1},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 错误码
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+
+### 5.22 `profile_pca`
+
+**用途**：用 psrpca 对逐 sub-int 剖面差异做主成分分析：archive（需多个 sub-int）对 `standard_profile` 拟合，差异剖面被分解，psrpca 写出的每个产物都提交为 artifact——差异剖面 archive、特征向量 archive、旋转/缩放 archive，以及特征值/分解/协方差/剖面文本表（特征值每个相位 bin 一个）。运行没有产出差异 archive 时 `diffs_archive` 为 null 并带 `W_PCA_NO_DIFFS` 警告。
+
+**后端**： psrpca
+**长任务**： yes
+**Annotations**： `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### 输入 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/profile_pca.input.json",
+  "type": "object",
+  "required": [
+    "archive",
+    "standard_profile"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Archive with multiple sub-integrations to decompose"
+    },
+    "standard_profile": {
+      "type": "string",
+      "description": "Standard profile the sub-integrations are matched against (-s)"
+    },
+    "root": {
+      "type": "string"
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 输出 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/profile_pca.output.json",
+  "type": "object",
+  "required": ["result_type", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "diffs_archive": {"oneOf": [{"$ref": "#/$defs/ArtifactRef"}, {"type": "null"}]},
+    "evecs_archive": {"oneOf": [{"$ref": "#/$defs/ArtifactRef"}, {"type": "null"}]},
+    "rotated_scaled_archive": {"oneOf": [{"$ref": "#/$defs/ArtifactRef"}, {"type": "null"}]},
+    "eigenvalues_artifact": {"type": ["string", "null"]},
+    "decomposition_artifact": {"type": ["string", "null"]},
+    "covariance_artifact": {"type": ["string", "null"]},
+    "profiles_artifact": {"type": ["string", "null"]},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 错误码
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+### 5.23 `single_pulse_analyze`
 
 **用途**：单脉冲分析（psrspa）。至少选择一种分析模式，模式分为互斥两组：(a) 相位分辨直方图（流量/偏振度/偏振角/线偏振/圆偏振）、相位区间最大振幅、线偏振-偏振角散点数据；(b) 逐脉冲检测（`find_pulses`，巨型脉冲搜索，算法来自白名单）——psrspa 的 `-a` 会提前返回并静默跳过 (a) 组，因此工具在入口直接拒绝该组合。相位分辨直方图是**每个相位 bin 一个文件**（如 nbin=1024 上取 0.3-0.7 区间会产出 411 个文件），工具把它们打包成单个文本 artifact（用 `# >>> <文件名>` 分节）。最大振幅条目携带的是相位 bin 索引（不是 turns），已对装机版本验证。直方图模式需要带 GSL 支持的 psrspa 构建。
 
@@ -2358,7 +2534,95 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.22 `rotation_measure_fit`
+### 5.24 `dynamic_spectra`
+
+**用途**：用 psrflux 提取逐脉冲流量动态谱：每个 sub-int 对 `standard_profile` 匹配，逐通道流量密度写成 ASCII 表（列 `isub ichan time(min) freq(MHz) flux flux_err`，头部为 #-注释；表作为文本 artifact 提交，以 archive 与标准轮廓为 provenance 父）。`align=per_profile` 逐剖面单独对齐标准（-a）；`align=none` 不做对齐拟合（-A）。解析摘要（行数、去重 sub-int/通道数、MJD0、流量方法）随结果返回——是调制指数与脉冲能量研究的基础数据（与 `single_pulse_analyze`、`profile_stability` 配套）。
+
+**后端**： psrflux
+**长任务**： yes
+**Annotations**： `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### 输入 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/dynamic_spectra.input.json",
+  "type": "object",
+  "required": [
+    "archive",
+    "standard_profile"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Archive to extract the per-pulse flux table from (read-only input)"
+    },
+    "standard_profile": {
+      "type": "string",
+      "description": "Standard profile each sub-integration is matched against (-s)"
+    },
+    "root": {
+      "type": "string"
+    },
+    "align": {
+      "enum": [
+        "default",
+        "per_profile",
+        "none"
+      ],
+      "default": "default",
+      "description": "Standard alignment: per_profile aligns the standard to each profile separately (-a), none disables alignment fitting (-A)"
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 输出 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/dynamic_spectra.output.json",
+  "type": "object",
+  "required": ["result_type", "ds_artifact", "n_rows", "n_subints", "n_channels", "warnings"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "ds_artifact": {"$ref": "#/$defs/ArtifactRef"},
+    "n_rows": {"type": "integer", "minimum": 0},
+    "n_subints": {"type": "integer", "minimum": 0},
+    "n_channels": {"type": "integer", "minimum": 0},
+    "mjd0": {"type": ["number", "null"]},
+    "flux_method": {"type": ["string", "null"]},
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Warning"}
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 错误码
+
+`E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`
+
+---
+
+### 5.25 `rotation_measure_fit`
 
 **用途**：对已校准、已 tscrunch、已消色散的 archive 拟合旋转测量（rmfit）。方法（至少一种）：暴力搜索试验 RM（`brute_force` 自动边界，或 `rm_range` 给出显式 `min,max,steps` 边界——两者互斥）、双半频带迭代精化（`refine`）、或 Noutsos+2008 二次拟合（`quadratic_window` / `quadratic_per_bin`，相位窗口单位为 turns）。`save_rm_archive=true` 时额外写出一个带每子积分辅助 RM 的新 archive artifact。rmfit 的文本输出做防御性解析；无法解析的 RM 值通过 `W_RMFIT_UNPARSED` 报告。
 
@@ -2486,7 +2750,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.23 `rvm_fit`
+### 5.26 `rvm_fit`
 
 **用途**：用 psrmodel 对偏振档案的位置角摆动拟合旋转矢量模型（RVM）。档案在内部被 tscrunch/fscrunch、转为 Stokes，并用头部 RM 把位置角改正到无穷频率；拟合返回 `alpha`（磁轴余纬）、`beta`（`use_beta=true`）或 `zeta`（视线余纬）、`psi0`/`phi0` 以及拟合卡方（`chisq`、`nfree`、`reduced_chisq`），单位均为度。相位范围（`include`/`exclude`/`opm`，每个为 "deg0:deg1" 脉冲经度度数）选择约束 bin 并标记正交模范围；`ortho` 切换到正交参数化；`mlgain` 使用极大似然增益；`residuals` 把拟合后的 PA（`psi`）或 Q/U（`stokes`）残差表存为文本 artifact。需要可恢复的 Stokes Q/U：不满足时（npol<4、未定标）psrmodel 以 0 退出且 stderr 只有 InvalidState 注记，psrmcp 将其映射为 `E_INVALID_INPUT`（"incomplete polarization information"）；其余情况以 `chisq=` 行而非退出码判定成功。
 
@@ -2617,7 +2881,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.24 `polarization_calibrate`
+### 5.27 `polarization_calibrate`
 
 **用途**：用 pac 对脉冲星 archive 做偏振（可选流量）定标。定标源二选一：`calibrators`（PolnCal / FluxCal-On / FluxCal-Off 扫描；每次调用在内存中重建定标器数据库，单次调用自包含）或 `model`（直接应用 pcm/pacv 的模型解）。模型：`singleaxis`（默认）、`polar`(`-s`)、`reception`(`-S`)。`*_match` 标志只能放宽 pac 的匹配判据（每个标志关闭一条判据）；`match_sequence` 限定只用脉冲星观测之前/之后的定标器。pac 内部会捕获单文件错误并仍以 0 退出，因此以校准输出文件是否产出判定成败；当偏振定标成功而流量定标失败时，pac 在输出名末尾追加 `P`，并报告 `W_PAC_POLN_ONLY` / `W_PAC_FLUXCAL_FAILED`（`flux_calibration=false` 时 `P` 后缀属预期，不告警）。模型解没有定标器数据库可用，流量定标被跳过并给出 `W_PAC_NO_FLUXDB`。
 
@@ -2765,7 +3029,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.25 `calibrator_database`
+### 5.28 `calibrator_database`
 
 **用途**：从定标器扫描 archive 构建 pac 定标器数据库摘要（`database.txt` artifact）。条目按头部元数据（时间、位置、频率、接收机）索引，供 pac 与脉冲星观测匹配；全部条目解析后内联返回（`entries` 的 `obs_type` 来自 archive 头部，如 PolnCal / FluxCal-On / FluxCal-Off，各类型计数在 `entry_types`）。pac 按扩展名识别定标器文件，因此列出的每个文件都必须有扩展名（否则 `E_INVALID_INPUT`）；所给扩展名会通过 `-u` 追加到 pac 默认扫描集（cf/pcal/fcal/pfit）之后。"找不到定标器"以非零码退出，表现为 `E_PROCESS_FAILED`。
 
@@ -2842,9 +3106,9 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.26 `toa_extract`
+### 5.29 `toa_extract`
 
-**用途**：使用标准轮廓从 archive 提取 TOA，生成 TEMPO `.tim` 文件。
+**用途**：使用标准轮廓从 archive 提取 TOA，生成 TEMPO `.tim` 文件。`include_snr=true` 时 pat 以 `-C snr` 运行，每条 TOA 行携带 `-snr <值>` 旗标；`min_snr` 按实测 S/N 过滤（否则退回启发式幅度列，`snr` 统计也基于幅度）。
 
 **后端**：pat  
 **长任务**：是  
@@ -2882,6 +3146,11 @@ MCP `tools/call` 返回：
       "type": "number",
       "minimum": 0,
       "default": 0
+    },
+    "include_snr": {
+      "type": "boolean",
+      "default": false,
+      "description": "Ask pat to report each TOA's S/N (-C snr, appended as a -snr flag in tempo2 format); min_snr then filters on the measured S/N"
     },
     "output_name": {"type": "string", "maxLength": 128},
     "execution_mode": {
@@ -2950,7 +3219,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.27 `timing_fit`
+### 5.30 `timing_fit`
 
 **用途**：使用 PINT 或 tempo2 对 `.par` + `.tim` 做计时拟合，返回更新后的 `.par`、拟合统计、残差和残差图。
 
@@ -3087,7 +3356,7 @@ MCP `tools/call` 返回：
 
 ---
 
-### 5.28 `timing_diagnose`
+### 5.31 `timing_diagnose`
 
 **用途**：对已有 `.par` + `.tim` 做残差和模型诊断，不重新拟合。可检查离群点、DM 变化、JUMP 和残差分布。
 
@@ -3203,179 +3472,6 @@ MCP `tools/call` 返回：
 #### 错误码
 
 `E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_VERSION_INCOMPATIBLE`, `E_PROCESS_FAILED`
-
----
-
-### 5.29 `artifact_list`
-
-**用途**：列出当前工作区的 artifact，支持按类型、时间和游标分页。
-
-**后端**：ArtifactStore  
-**长任务**：否  
-**Annotations**：`readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
-
-#### 输入 Schema
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://psrmcp.local/schemas/artifact_list.input.json",
-  "type": "object",
-  "properties": {
-    "kind": {
-      "enum": [
-        "archive",
-        "ephemeris",
-        "tim",
-        "par",
-        "profile",
-        "mask",
-        "plot",
-        "residuals",
-        "log",
-        "catalog",
-        "json",
-        "other"
-      ]
-    },
-    "limit": {
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 500,
-      "default": 50
-    },
-    "cursor": {"type": "string"},
-    "created_after": {"type": "string", "format": "date-time"}
-  },
-  "additionalProperties": false
-}
-```
-
-#### 输出 Schema
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://psrmcp.local/schemas/artifact_list.output.json",
-  "type": "object",
-  "required": ["result_type", "artifacts", "count"],
-  "properties": {
-    "result_type": {"const": "completed"},
-    "artifacts": {
-      "type": "array",
-      "items": {"$ref": "#/$defs/ArtifactRef"}
-    },
-    "count": {"type": "integer", "minimum": 0},
-    "next_cursor": {"type": ["string", "null"]}
-  },
-  "additionalProperties": false
-}
-```
-
-#### 错误码
-
-`E_INVALID_INPUT`, `E_INTERNAL`
-
----
-
-### 5.30 `job_get`
-
-**用途**：查询异步任务状态和结果。仅在客户端不支持 MCP Tasks 扩展时作为兜底使用。
-
-**后端**：JobManager  
-**长任务**：否  
-**Annotations**：`readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
-
-#### 输入 Schema
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://psrmcp.local/schemas/job_get.input.json",
-  "type": "object",
-  "required": ["job_id"],
-  "properties": {
-    "job_id": {
-      "type": "string",
-      "pattern": "^job_[A-Za-z0-9_-]{8,64}$"
-    }
-  },
-  "additionalProperties": false
-}
-```
-
-#### 输出 Schema
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://psrmcp.local/schemas/job_get.output.json",
-  "type": "object",
-  "required": ["result_type", "job"],
-  "properties": {
-    "result_type": {"const": "completed"},
-    "job": {"$ref": "#/$defs/JobRef"}
-  },
-  "additionalProperties": false
-}
-```
-
-#### 错误码
-
-`E_INVALID_INPUT`, `E_TASK_NOT_FOUND`
-
----
-
-### 5.31 `job_cancel`
-
-**用途**：请求取消异步任务。取消是协作式的：服务器先发送 `SIGTERM`，宽限期后如仍运行则 `SIGKILL` 进程组。
-
-**后端**：JobManager  
-**长任务**：否  
-**Annotations**：`readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=false`, `openWorldHint=false`
-
-#### 输入 Schema
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://psrmcp.local/schemas/job_cancel.input.json",
-  "type": "object",
-  "required": ["job_id"],
-  "properties": {
-    "job_id": {
-      "type": "string",
-      "pattern": "^job_[A-Za-z0-9_-]{8,64}$"
-    },
-    "force": {
-      "type": "boolean",
-      "default": false,
-      "description": "跳过宽限期，直接终止进程组"
-    }
-  },
-  "additionalProperties": false
-}
-```
-
-#### 输出 Schema
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://psrmcp.local/schemas/job_cancel.output.json",
-  "type": "object",
-  "required": ["result_type", "job"],
-  "properties": {
-    "result_type": {"const": "completed"},
-    "job": {"$ref": "#/$defs/JobRef"}
-  },
-  "additionalProperties": false
-}
-```
-
-#### 错误码
-
-`E_INVALID_INPUT`, `E_TASK_NOT_FOUND`, `E_JOB_NOT_RUNNING`
 
 ---
 
@@ -3576,6 +3672,179 @@ MCP `tools/call` 返回：
 #### 错误码
 
 `E_INVALID_INPUT`, `E_NOT_FOUND`, `E_ENV_MISSING`, `E_PROCESS_FAILED`, `E_TIMEOUT`
+
+---
+
+### 5.34 `artifact_list`
+
+**用途**：列出当前工作区的 artifact，支持按类型、时间和游标分页。
+
+**后端**：ArtifactStore  
+**长任务**：否  
+**Annotations**：`readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### 输入 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/artifact_list.input.json",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "enum": [
+        "archive",
+        "ephemeris",
+        "tim",
+        "par",
+        "profile",
+        "mask",
+        "plot",
+        "residuals",
+        "log",
+        "catalog",
+        "json",
+        "other"
+      ]
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 500,
+      "default": 50
+    },
+    "cursor": {"type": "string"},
+    "created_after": {"type": "string", "format": "date-time"}
+  },
+  "additionalProperties": false
+}
+```
+
+#### 输出 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/artifact_list.output.json",
+  "type": "object",
+  "required": ["result_type", "artifacts", "count"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "artifacts": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/ArtifactRef"}
+    },
+    "count": {"type": "integer", "minimum": 0},
+    "next_cursor": {"type": ["string", "null"]}
+  },
+  "additionalProperties": false
+}
+```
+
+#### 错误码
+
+`E_INVALID_INPUT`, `E_INTERNAL`
+
+---
+
+### 5.35 `job_get`
+
+**用途**：查询异步任务状态和结果。仅在客户端不支持 MCP Tasks 扩展时作为兜底使用。
+
+**后端**：JobManager  
+**长任务**：否  
+**Annotations**：`readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`
+
+#### 输入 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/job_get.input.json",
+  "type": "object",
+  "required": ["job_id"],
+  "properties": {
+    "job_id": {
+      "type": "string",
+      "pattern": "^job_[A-Za-z0-9_-]{8,64}$"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 输出 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/job_get.output.json",
+  "type": "object",
+  "required": ["result_type", "job"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "job": {"$ref": "#/$defs/JobRef"}
+  },
+  "additionalProperties": false
+}
+```
+
+#### 错误码
+
+`E_INVALID_INPUT`, `E_TASK_NOT_FOUND`
+
+---
+
+### 5.36 `job_cancel`
+
+**用途**：请求取消异步任务。取消是协作式的：服务器先发送 `SIGTERM`，宽限期后如仍运行则 `SIGKILL` 进程组。
+
+**后端**：JobManager  
+**长任务**：否  
+**Annotations**：`readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=false`, `openWorldHint=false`
+
+#### 输入 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/job_cancel.input.json",
+  "type": "object",
+  "required": ["job_id"],
+  "properties": {
+    "job_id": {
+      "type": "string",
+      "pattern": "^job_[A-Za-z0-9_-]{8,64}$"
+    },
+    "force": {
+      "type": "boolean",
+      "default": false,
+      "description": "跳过宽限期，直接终止进程组"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+#### 输出 Schema
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/job_cancel.output.json",
+  "type": "object",
+  "required": ["result_type", "job"],
+  "properties": {
+    "result_type": {"const": "completed"},
+    "job": {"$ref": "#/$defs/JobRef"}
+  },
+  "additionalProperties": false
+}
+```
+
+#### 错误码
+
+`E_INVALID_INPUT`, `E_TASK_NOT_FOUND`, `E_JOB_NOT_RUNNING`
 
 ---
 

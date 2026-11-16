@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/dynamic_spectra.input.json",
+  "type": "object",
+  "required": [
+    "archive",
+    "standard_profile"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Archive to extract the per-pulse flux table from (read-only input)"
+    },
+    "standard_profile": {
+      "type": "string",
+      "description": "Standard profile each sub-integration is matched against (-s)"
+    },
+    "root": {
+      "type": "string"
+    },
+    "align": {
+      "enum": [
+        "default",
+        "per_profile",
+        "none"
+      ],
+      "default": "default",
+      "description": "Standard alignment: per_profile aligns the standard to each profile separately (-a), none disables alignment fitting (-A)"
+    },
+    "output_name": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}

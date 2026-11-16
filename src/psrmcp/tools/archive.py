@@ -130,7 +130,7 @@ async def _inspect(ctx: AppContext, inp: ArchiveInspectInput, progress) -> Archi
 
     integrations: list[IntegrationRow] | None = None
     if inp.include_integrations:
-        integrations = _probe_integrations(ctx, resolved.resolved, inp.max_integrations, warnings)
+        integrations = await _probe_integrations(ctx, resolved.resolved, inp.max_integrations, warnings)
 
     prov = make_provenance(
         tool="archive_inspect",
@@ -275,14 +275,9 @@ async def _merge(ctx: AppContext, inp: ArchiveMergeInput, progress) -> ArchiveMe
         duration_s=time.monotonic() - t0,
         command=argv,
     )
-    ref = ctx.store.commit(
-        src_path=out_path,
-        filename=out_path.name,
-        kind=ArtifactKind.ARCHIVE,
-        format_name="PSRARCHIVE",
-        provenance=prov,
-        parents=[r.artifact_id for r in resolved if r.artifact_id],
-    )
+    # probe the dimensions BEFORE commit: commit() renames the file into the
+    # store, so a vap on out_path afterwards finds nothing (this used to
+    # silently report all-zero dimensions)
     dims = Dimensions(nsubint=0, nchan=0, npol=0, nbin=0)
     try:
         vap = await ctx.runner.run(psa.vap_cmd(_tool(ctx, "vap"), str(out_path)), timeout_s=120.0)
@@ -295,6 +290,14 @@ async def _merge(ctx: AppContext, inp: ArchiveMergeInput, progress) -> ArchiveMe
         )
     except PsrmcpError:
         pass
+    ref = ctx.store.commit(
+        src_path=out_path,
+        filename=out_path.name,
+        kind=ArtifactKind.ARCHIVE,
+        format_name="PSRARCHIVE",
+        provenance=prov,
+        parents=[r.artifact_id for r in resolved if r.artifact_id],
+    )
     progress("complete", 1.0)
     return ArchiveMergeResult(artifact=ref, n_inputs=len(resolved), dimensions=dims, warnings=warnings)
 
@@ -498,15 +501,45 @@ def _ang(v: object, conv) -> float | None:
         return None
 
 
-def _probe_integrations(ctx: AppContext, path: Path, limit: int, warnings: list[WarningInfo]) -> list[IntegrationRow] | None:
-    # TODO(contract): per-integration rows need psrstat sub-integration output;
-    # the exact expression syntax gets backfilled after the toolchain exists.
-    warnings.append(WarningInfo(
-        code="W_INTEGRATIONS_UNAVAILABLE",
-        message="include_integrations=true is not implemented yet: awaiting psrstat per-sub-integration output backfill",
-        severity="warning",
-    ))
-    return None
+async def _probe_integrations(ctx: AppContext, path: Path, limit: int,
+                              warnings: list[WarningInfo]) -> list[IntegrationRow] | None:
+    """Per-sub-integration rows via psrstat's subint loop (contract verified
+    on the installed stack, 2026-11-15: index name is `subint`; snr/nbin/
+    nchan/freq resolve per row, mjd/duration do not). Returns None with a
+    warning when the dimensions cannot be probed."""
+    dims = await _vap_meta_dims(ctx, path)
+    nsub = dims.get("nsubint") or 0
+    if nsub <= 0:
+        warnings.append(WarningInfo(
+            code="W_INTEGRATIONS_UNAVAILABLE",
+            message="could not determine the sub-integration count; "
+                    "include_integrations skipped",
+            severity="warning",
+        ))
+        return None
+    binary = _tool(ctx, "psrstat")
+    argv = psa.psrstat_subints_cmd(binary, str(path), nsub, limit)
+    run = await ctx.runner.run(argv, timeout_s=120.0)
+    if run.exit_code != 0:
+        warnings.append(WarningInfo(
+            code="W_INTEGRATIONS_UNAVAILABLE",
+            message=f"psrstat subint loop failed (exit code {run.exit_code}); "
+                    "include_integrations skipped",
+            severity="warning",
+        ))
+        return None
+    rows = [
+        IntegrationRow(**r)
+        for r in psa.parse_psrstat_subints(run.stdout_text)
+    ]
+    if nsub > limit:
+        warnings.append(WarningInfo(
+            code="W_INTEGRATIONS_TRUNCATED",
+            message=f"showing the first {limit} of {nsub} sub-integrations "
+                    "(raise max_integrations for more)",
+            severity="warning",
+        ))
+    return rows or None
 
 
 async def _split(ctx: AppContext, inp: ArchiveSplitInput, progress) -> ArchiveSplitResult:

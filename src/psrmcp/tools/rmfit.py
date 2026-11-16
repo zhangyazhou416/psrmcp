@@ -1,4 +1,4 @@
-"""rotation_measure_fit (TOOLS.md 5.22) + rvm_fit (5.23): rmfit/psrmodel fitting."""
+"""rotation_measure_fit (TOOLS.md 5.25) + rvm_fit (5.26): rmfit/psrmodel fitting."""
 
 from __future__ import annotations
 

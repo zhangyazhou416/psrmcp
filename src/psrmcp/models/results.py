@@ -1,4 +1,4 @@
-"""Output models for all 33 tools (TOOLS.md section 5 output schemas)."""
+"""Output models for all 36 tools (TOOLS.md section 5 output schemas)."""
 
 from __future__ import annotations
 
@@ -185,11 +185,17 @@ class EphemerisPointer(BaseModel):
 
 
 class IntegrationRow(BaseModel):
+    """One sub-integration of an archive (psrstat subint loop). mjd/duration
+    are not exposed per sub-integration by the installed psrstat and stay
+    None until a source becomes available."""
     model_config = FORBID
     index: int = Field(ge=0)
     mjd: float | None = None
     duration_s: float | None = None
     snr: float | None = None
+    nbin: int | None = None
+    nchan: int | None = None
+    freq_mhz: float | None = None
 
 
 class ArchiveInspectResult(ToolResult):
@@ -893,3 +899,76 @@ class JobCancelResult(ToolResult):
 
     def summarize(self) -> str:
         return f"Job `{self.job.job_id}` status: {self.job.status.value}"
+
+
+class ProfileStabilityResult(ToolResult):
+    """psrstability output: one averaged-profile artifact per chunk beyond
+    `turns` (n_profiles = n_archives - turns)."""
+    model_config = FORBID
+    profiles: list[ArtifactRef]
+    n_profiles: int = Field(ge=0)
+    turns: int = Field(ge=1)
+    warnings: list[WarningInfo] = Field(default_factory=list)
+
+    def summarize(self) -> str:
+        lines = [f"Profile stability: {self.n_profiles} averaged profile(s) "
+                 f"(turns={self.turns})"]
+        for p in self.profiles:
+            lines.append(f"- `{p.artifact_id}`")
+        for w in self.warnings:
+            lines.append(f"- ⚠ {w.message}")
+        return "\n".join(lines)
+
+
+class ProfilePcaResult(ToolResult):
+    """psrpca products: difference-profile and eigenvector archives plus the
+    eigenvalues / decomposition / covariance text tables. Fields are None
+    for products this run did not produce."""
+    model_config = FORBID
+    diffs_archive: ArtifactRef | None = None
+    evecs_archive: ArtifactRef | None = None
+    rotated_scaled_archive: ArtifactRef | None = None
+    eigenvalues_artifact: str | None = None
+    decomposition_artifact: str | None = None
+    covariance_artifact: str | None = None
+    profiles_artifact: str | None = None
+    warnings: list[WarningInfo] = Field(default_factory=list)
+
+    def summarize(self) -> str:
+        lines = ["Profile PCA:"]
+        if self.diffs_archive is not None:
+            lines.append(f"- difference profiles: `{self.diffs_archive.artifact_id}`")
+        if self.evecs_archive is not None:
+            lines.append(f"- eigenvectors: `{self.evecs_archive.artifact_id}`")
+        if self.eigenvalues_artifact is not None:
+            lines.append(f"- eigenvalues: `{self.eigenvalues_artifact}`")
+        if self.decomposition_artifact is not None:
+            lines.append(f"- decomposition: `{self.decomposition_artifact}`")
+        for w in self.warnings:
+            lines.append(f"- ⚠ {w.message}")
+        return "\n".join(lines)
+
+
+class DynamicSpectraResult(ToolResult):
+    """psrflux dynamic spectrum: per-(sub-int, channel) flux densities as a
+    text artifact, plus the parsed table summary."""
+    model_config = FORBID
+    ds_artifact: ArtifactRef
+    n_rows: int = Field(ge=0)
+    n_subints: int = Field(ge=0)
+    n_channels: int = Field(ge=0)
+    mjd0: float | None = None
+    flux_method: str | None = None
+    warnings: list[WarningInfo] = Field(default_factory=list)
+
+    def summarize(self) -> str:
+        lines = [f"Dynamic spectrum: {self.n_rows} rows "
+                 f"({self.n_subints} sub-int x {self.n_channels} chan) "
+                 f"-> `{self.ds_artifact.artifact_id}`"]
+        if self.mjd0 is not None:
+            lines.append(f"- MJD0 = {self.mjd0:.6f}")
+        if self.flux_method is not None:
+            lines.append(f"- flux method: {self.flux_method}")
+        for w in self.warnings:
+            lines.append(f"- ⚠ {w.message}")
+        return "\n".join(lines)

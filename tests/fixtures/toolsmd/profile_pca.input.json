@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psrmcp.local/schemas/profile_pca.input.json",
+  "type": "object",
+  "required": [
+    "archive",
+    "standard_profile"
+  ],
+  "properties": {
+    "archive": {
+      "type": "string",
+      "description": "Archive with multiple sub-integrations to decompose"
+    },
+    "standard_profile": {
+      "type": "string",
+      "description": "Standard profile the sub-integrations are matched against (-s)"
+    },
+    "root": {
+      "type": "string"
+    },
+    "execution_mode": {
+      "enum": [
+        "auto",
+        "sync",
+        "async"
+      ],
+      "default": "auto"
+    }
+  },
+  "additionalProperties": false
+}
